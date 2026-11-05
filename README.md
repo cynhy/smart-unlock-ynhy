@@ -1,5 +1,7 @@
 # Smart Unlock · 亮屏自动解锁
 
+[简体中文](README.md) | [English](README.en.md)
+
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE)
 ![minSdk](https://img.shields.io/badge/minSdk-26-green)
 ![targetSdk](https://img.shields.io/badge/targetSdk-34-green)
@@ -11,6 +13,12 @@
 > 本项目会向系统注入锁屏密码。请先阅读 [安全说明](#安全说明) 与 [免责声明](#免责声明)，确认风险后再使用。
 
 > **推荐版本：3.3.3** —— 修复了部署/重启后沿用旧在线缓存导致的误解锁。历史版本见 [releases/](releases/)，详细说明见 [README-9.0.md](README-9.0.md)。
+
+## 下载
+
+- **3.3.3 正式签名包**：[watch-unlock-3.3.3-official.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.3.3/watch-unlock-3.3.3-official.apk)（3.2 MB，点开即下载）
+- **详细说明**（原理、配置字段、排错、对比）：[README-9.0.md](README-9.0.md) · [English](README-9.0.en.md)
+- 其他历史版本：[releases/](releases/)
 
 ---
 
@@ -63,7 +71,7 @@ wm dismiss-keyguard  →  input text <PIN>  →  （可选）music_return
    - **Shizuku**：先安装并启动 [Shizuku](https://shizuku.rikka.app/)，回到本应用点「请求授权」。
    - **Root**：开发者选项里把 Root access 设为「Apps and ADB」，首次执行时在 `su` 弹窗里允许。
    - **无线调试**：开发者选项打开「无线调试」→ 进入本应用「无线调试」页 → 用配对码完成配对 → 连接。
-4. 回到主页添加目标设备：点右上角「添加当前设备/当前 Wi-Fi」。
+4. 回到主页，在蓝牙列表里勾选目标设备（点「重新扫描」可刷新）；Wi-Fi 条件点「添加当前 Wi-Fi」。
 5. 点「部署并启用」，状态变成「运行中」即生效。
 
 > **为了稳定，改动任何选项后请回到主页重新点「部署并启用」。** 重新部署会清理上一轮的运行残留（旧守护进程、旧 logcat 监听、跨进程锁与在线判定缓存），但不会清除设置、设备勾选与日志。

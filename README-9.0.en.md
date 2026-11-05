@@ -1,0 +1,755 @@
+# Smart Unlock · Detailed Documentation
+
+[简体中文](README-9.0.md) | [English](README-9.0.en.md)
+
+---
+
+## Table of Contents
+
+- [1. What This Is](#1-what-this-is)
+- [2. Supported Platforms and Hard Limits](#2-supported-platforms-and-hard-limits)
+- [3. How It Works](#3-how-it-works)
+- [4. Three Authorization Tiers](#4-three-authorization-tiers)
+- [5. Feature Details](#5-feature-details)
+- [6. First-Run Flow](#6-first-run-flow)
+- [7. Why Settings Changes Require Redeployment](#7-why-settings-changes-require-redeployment)
+- [8. Config and Runtime Files](#8-config-and-runtime-files)
+- [9. Daemon Script Command Interface](#9-daemon-script-command-interface)
+- [10. Unlock Decision Logic](#10-unlock-decision-logic)
+- [11. Measured Resource Usage](#11-measured-resource-usage)
+- [12. Install, Upgrade and Signing](#12-install-upgrade-and-signing)
+- [13. Building From Source](#13-building-from-source)
+- [14. FAQ](#14-faq)
+- [15. Known Limitations](#15-known-limitations)
+- [16. Security and Privacy](#16-security-and-privacy)
+- [17. Versions and Changelog](#17-versions-and-changelog)
+- [18. Code Structure](#18-code-structure)
+- [19. Comparison With Stock and Vendor Solutions](#19-comparison-with-stock-and-vendor-solutions)
+- [20. License and Credits](#20-license-and-credits)
+
+---
+
+## 1. What This Is
+
+A small Android tool: **while a designated Bluetooth device (watch, earbuds, band, etc.) is online, the phone automatically enters the lock-screen PIN and dismisses the keyguard every time the screen turns on**.
+
+The problem it solves: when you are wearing a watch or earbuds, the phone is right next to you, yet every time the screen lights up you still have to swipe and type the password.
+
+Core characteristics:
+
+- **No root required** (Shizuku by default), and no computer needed to stay connected;
+- **Unlocking does not depend on the app process**: after deployment a shell daemon script runs in the background, so swiping the app away or the system killing it does not affect unlocking;
+- **Three authorization tiers**: Shizuku / Root / built-in wireless debugging (the phone acts as its own ADB client);
+- **Event-driven, almost no battery cost**: it listens to screen-on and network-loss events in the system `logcat`, with no polling.
+
+> This project injects the lock-screen password into the system. Read [Security and Privacy](#16-security-and-privacy) first and confirm the risks before using it.
+
+---
+
+## 2. Supported Platforms and Hard Limits
+
+| Item | Requirement |
+| --- | --- |
+| Minimum system | **Android 8.0 (API 26)** |
+| Built-in wireless debugging | **Android 11 and above** (the release where the system "Wireless debugging" feature appeared) |
+| Lock-screen method | **PIN (digits only)**; pattern/password/fingerprint-only unlock is not supported |
+| Permissions | Notifications, nearby devices (Bluetooth on Android 12+), battery optimization whitelist (optional, because the core does not rely on it) |
+| Tested environments | Android 12 / 13 / 14 / 16 (LineageOS24.0, HyperOS3, HarmonyOS 4.2) |
+
+### Why the minimum is 8.0
+
+This is not a limit of the unlocking principle; the current implementation uses the notification model introduced in Android 8.0:
+
+- `NotificationChannel` (API 26)
+- `new Notification.Builder(context, channelId)` (API 26)
+- `startForegroundService()` (API 26)
+
+Below 8.0 these classes/methods do not exist, and the program crashes outright when building the notification or starting the foreground service (`NoClassDefFoundError` / `NoSuchMethodError`). The APK also declares `minSdk 26`, so **on 7.1 and below even installation is rejected by the system**.
+
+To be clear: the unlock chain itself (`sh` + `logcat -b events` + `wm dismiss-keyguard` + `input text`) is feasible in principle on older systems, and `wm dismiss-keyguard` has existed since roughly 5.0. Supporting 5.0–7.1 would mean replacing the foreground service with `startService`, removing the notification channel, switching to the old `Notification.Builder`, and re-handling runtime permissions on 6/7 — "adaptable, but not done and not tested at present"---
+
+## 3. How It Works
+
+### 3.1 One-Sentence Flow
+
+```
+Bluetooth device online / trusted Wi-Fi connected
+        │
+        ▼
+Screen turns on (system logcat events event)
+        │
+        ▼
+wu-daemon.sh (resident as shell uid 2000, event-driven)
+        │  reads /sdcard/watch-unlock/config.conf
+        │  checks: target device online? Wi-Fi condition? paused/cooldown? keyguard shown?
+        ▼
+wm dismiss-keyguard  →  input text <PIN>  →  (optional) music lock-screen return
+```
+
+### 3.2 Process Model
+
+| Process | Identity | Role | Lifetime |
+| --- | --- | --- | --- |
+| `com.watchunlock.app` | Normal app uid | UI, config delivery, status display, Bluetooth broadcast listening | Tied to app/system, may be killed |
+| `wu-daemon.sh` | shell (uid 2000) | Listen for screen-on events, perform unlock | Resident after deployment, **independent of the app's survival** |
+| `logcat -b events` | shell child process | Feed system events to the daemon | Tied to the daemon, auto-restarted 1 second after exit |
+
+The daemon is started with `nohup sh wu-daemon.sh &`, and after the parent shell exits it is reparented to `init`, therefore:
+
+- Swiping away recent tasks or force-stopping the app → unlocking continues as usual;
+- Shizuku killed/stopped → the daemon is still there (default `RUN_MODE=detached`; if switched to the `RUN_MODE=shizuku` managed mode, it ends with Shizuku);
+- **Phone reboot → the daemon is gone**, and the authorization engine must start it again (the app's foreground service has a 60-second watchdog, but only if authorization is ready).
+
+### 3.3 Timeline of One Unlock
+
+1. The daemon receives `power_screen_state [1,...]` (screen on) or `wifi_network_state_changed`;
+2. Screen-off events are only used to reset the debounce counter, they do not trigger anything;
+3. It reads the state file and checks `status=disabled`, pause, and failure cooldown;
+4. It checks the conditions: target device online (any/all), required Wi-Fi, RSSI floor, SIM guard;
+5. It takes the cross-process lock `wu.unlock.d`, and skips if an injection happened within 1.5 seconds;
+6. `wm dismiss-keyguard` brings up the PIN screen and `input text <PIN>` injects the PIN; on failure it falls back to locating the input field with uiautomator;
+7. On success, it optionally performs the music lock-screen return: `am start` by package name, or a swipe to the right;
+8. After 3 accumulated failures it enters a 600-second cooldown to avoid frantic retries.
+
+### 3.4 Bluetooth Online Determination
+
+- At daemon start it first refreshes the online cache with `presence_refresh` (`/data/local/tmp/wu.present`);
+- Afterwards the app listens for Bluetooth connect/disconnect broadcasts and calls `wu-daemon.sh --present track` to maintain it in real time;
+- If the app cannot listen to Bluetooth (no "nearby devices" permission), it calls `--untrack` to revoke the "trusted cache" flag, and on screen-on it queries on the spot instead (slower, but it will never unlock based on a stale conclusion);
+- Since 3.3.3, **both deployment and restart clear this cache**, so the previous round's conclusion does not linger.
+
+---
+
+## 4. Three Authorization Tiers
+
+All three methods run the **same daemon script**; the only difference is "who grants the shell identity". You can switch at any time on the settings page, but **after switching you must tap "Deploy & enable" (部署并启用) again**.
+
+| Method | What is needed | Stability | Who it suits | Main limitation |
+| --- | --- | --- | --- | --- |
+| **Shizuku** (default) | Install and run Shizuku, tap "Request authorization" (请求授权) in this app | Most stable | Most users | After the system reclaims Shizuku it must be restarted; adding it to the battery whitelist is recommended |
+| **Root** | Device already rooted, approve the `su` prompt | Stable (depends on the su implementation) | Users who already have root | Developer options Root access must be "Apps and ADB"; on some ROMs the su binary is only exposed to adb |
+| **Built-in wireless debugging** | Enable "Wireless debugging" (无线调试) in developer options, pair once with a pairing code | Medium | Those who neither want Shizuku nor have root | Requires Android 11+; after reboot wireless debugging turns off and the port changes, so pairing/connection must be redone |
+
+### 4.1 Shizuku
+
+1. Install [Shizuku](https://shizuku.rikka.app/) and start it (starting Shizuku via wireless debugging or root both work);
+2. This app → Settings → Authorization method (授权方式) → Shizuku → "Request authorization";
+3. Back to the home page → "Deploy & enable".
+
+Shizuku itself also relies on ADB/root to start, but it is a resident service, so it only needs configuring once; some systems reclaim it, so adding both Shizuku and this app to the battery optimization whitelist is recommended.
+
+### 4.2 Root
+
+1. Developer options → set Root access to "Apps and ADB" (names differ slightly across ROMs);
+2. This app → Settings → Authorization method → Root;
+3. The first deployment pops up a `su` prompt; choose "Allow" (允许);
+4. Back to the home page → "Deploy & enable".
+
+No Magisk module needed. If it reports `Root unavailable`, then `su` did not grant this app, or the device is not actually rooted.
+
+### 4.3 Built-in Wireless Debugging (no Shizuku dependency)
+
+The app bundles [Kadb](https://github.com/flyfishxu/Kadb) as the ADB client, and the phone connects to its own wireless debugging port (default `127.0.0.1`).
+
+Pairing steps (the two ports are not the same number):
+
+1. Developer options → enable "Wireless debugging";
+2. On the "Wireless debugging" main page find the **IP address and port**, and enter the port into the app's "Connection port" (连接端口);
+3. Tap "Pair device with pairing code" (使用配对码配对设备); the dialog shows **another port** and a 6-digit pairing code — enter them into "Pairing port" (配对端口) and "Pairing code" (配对码);
+4. **Keep the pairing dialog open**, tap "Pair" (配对); after success tap "Connection test" (连接测试);
+5. After a phone reboot wireless debugging turns off automatically, so it must be re-enabled and paired again.
+
+Notes:
+
+- The pairing port becomes invalid immediately once the pairing dialog is closed;
+- If the connection fails, turn "Wireless debugging" off and on again in developer options, then pair again;
+- The pairing code is only shown on the system page; this app cannot read it.
+
+### 4.4 Authorization Method Comparison: When It Is Still Needed
+
+| Scenario | Needs the authorization engine? |
+| --- | --- |
+| Daily screen-on unlocking (daemon already running) | **No** |
+| First deployment / redeployment | Yes |
+| Applying config after changing settings | Yes |
+| Pause / resume / one-tap cleanup / read status | Yes |
+| Refresh online cache after Bluetooth disconnect | Yes (otherwise the old cache is used) |
+| 60-second watchdog restart after the daemon is killed | Yes |
+| **Restore the daemon after a phone reboot** | **Yes** (if Shizuku does not autostart on boot, authorization must be redone) |
+
+---
+
+## 5. Feature Details
+
+### 5.1 Bluetooth Target Devices
+
+- The "Bluetooth devices" (蓝牙设备) card on the home page automatically reads **already paired** devices in the system (requires the "nearby devices" permission); tap "Rescan" (重新扫描) to refresh;
+- Newly discovered devices are **not enabled** by default, so that on first install all earbuds/watches are not counted as "any one online";
+- Each row in the list can be enabled/disabled individually; only checked devices take part in the decision;
+- Two modes, pick one:
+  - **Any online** (any, default): any one enabled device in the list online satisfies the condition;
+  - **All online** (all, with "multi-device mode" enabled): every enabled device must be online.
+- An RSSI floor is supported (`RSSI_MIN`); too weak a signal is treated as not online, avoiding false triggers through a wall.
+
+### 5.2 Wi-Fi Conditions
+
+Two independent switches, combinable:
+
+| Switch | Meaning |
+| --- | --- |
+| Wi-Fi can unlock (Wi-Fi 可解锁) | Connecting to any enabled SSID in the list triggers unlocking (Bluetooth not required) |
+| Wi-Fi is required (Wi-Fi 为必要条件) | Besides being Bluetooth-online, the phone must also be connected to the specified SSID to unlock |
+
+Limitation: **only the currently connected Wi-Fi can be added**; manual SSID entry is not supported (the app cannot read credentials of networks it is not connected to). To add a network, connect to it first, then tap "Add current WiFi" (添加当前 WiFi).
+
+### 5.3 Lock-Screen PIN
+
+- 4–16 digits only;
+- Stored in the app's private `SharedPreferences` and in `/sdcard/watch-unlock/config.conf`;
+- Injection mainly uses `input text`, with `input keyevent` used digit by digit when necessary;
+- **Do not** use a pattern/mixed password; the script cannot inject it reliably.
+
+### 5.4 SIM Card PIN Guard
+
+- Off by default;
+- When enabled, it checks the SIM lock state one more time before unlocking: if the SIM is on the PIN lock screen, it **refuses to inject the phone PIN**, avoiding typing the phone lock-screen password into the SIM and locking the card;
+- The cost is one extra state check, so unlock speed and success rate drop slightly.
+
+### 5.5 Pause and Resume
+
+The home page offers "Pause 15 minutes / 1 hour / 4 hours" (暂停 15 分钟 / 1 小时 / 4 小时) and a custom number of seconds, plus "Resume" (恢复).
+
+- Pausing writes to the state file; the daemon does not exit, it simply skips unlocking;
+- Useful for temporarily taking the phone away from you, for example when handing it to someone else, or during periods when automatic unlocking is not wanted.
+
+### 5.6 Vibration Feedback
+
+- There is a master switch on the settings page, on by default;
+- A light vibration when tapping buttons and toggling switches (`VIRTUAL_KEY`, ignoring the system's master "touch vibration" switch);
+- Once off, no interaction in the app vibrates; unlocking itself is unaffected.
+
+### 5.7 Music Lock-Screen Return
+
+When the lock screen is a music interface, after entering the PIN you often cannot get out of it. Two methods are provided, which can be enabled separately or together:
+
+| Method | Behavior | Notes |
+| --- | --- | --- |
+| Open app by package name | After unlocking, `am start` opens the main screen of the given package | **When both are enabled this one takes priority**; a wrong package name falls back to the right swipe (if enabled) |
+| Swipe right | After unlocking, perform one swipe-right gesture | Some ROMs' music lock screens intercept the gesture, in which case use open-app instead |
+
+The package name must be complete (e.g. `com.netease.cloudmusic`), not the app's display name.
+
+### 5.8 Announcement Board (Third-Level Page)
+
+Contains:
+
+- The current version and signing notes (release/test builds cannot be installed over each other);
+- **Important reminders** (redeploy after changes; what deployment clears and does not clear; the 3.3.3 cache fix; switching authorization requires redeployment);
+- **Changelog** (summarized by version, including each version's bug fixes);
+- Usage notes (authorization, ports, Wi-Fi, SIM, music return, background restrictions, etc.);
+- Open-source component credits: blue links open the license text.
+
+### 5.9 Log Page
+
+- View `/sdcard/watch-unlock/wu.log` (daemon log);
+- One-tap copy and clear;
+- Logs over 1 MB are automatically rotated to `wu.log.old`;
+- Detailed deployment failure reasons are also written to a visible place on the log page.
+
+### 5.10 One-Tap Cleanup of Leftovers
+
+Entry: "One-tap cleanup" (一键清理残留) on the home page (a danger-colored button with a confirmation prompt).
+
+What it does:
+
+- Stop the daemon and kill all leftover `wu-daemon.sh` and `logcat -b events` processes;
+- Delete `/sdcard/watch-unlock/` (scripts, config, logs);
+- Delete `/data/local/tmp/wu.*` (locks, state, caches, temporary files).
+
+It **keeps** the in-app device selections and Wi-Fi list, making redeployment after cleanup easier. After cleanup you must redeploy before unlocking works again.
+
+### 5.11 Built-in ADB Console
+
+Entry: the "Wireless debugging" (无线调试) card on the home page (or Settings → Wireless debugging).
+
+- At the top you can enter one `adb shell` command and run it, with the exit code and output echoed back;
+- Pairing and connection of wireless debugging must be completed first;
+- The page includes operating steps, connection parameters (host/connection port/pairing port/pairing code), pair/connection test/disconnect buttons, and a shortcut to "Open wireless debugging settings" (打开无线调试设置).
+
+> Original intent: since an ADB client is already bundled, just use it as a command console too, so there is no need to plug into a computer.
+
+### 5.12 Language
+
+- Follows the system by default;
+- The settings page can force Chinese / English (`I18n` bilingual strings, with `values` and `values-en` on the resource side).
+
+---
+
+## 6. First-Run Flow
+
+1. Install the APK (release signature or test signature, see [Section 12](#12-install-upgrade-and-signing)).
+2. Open the app and grant the **notifications** and **nearby devices** permissions as prompted.
+3. Go to **Settings → Authorization method**, choose Shizuku / Root / wireless debugging, and complete the corresponding authorization (see [Section 4](#4-three-authorization-tiers)).
+4. Back on the home page, check the target device in the "Bluetooth devices" card (pair the watch/earbuds with the phone first; tap "Rescan" if the list is empty); if needed, also tap "Add current WiFi".
+5. Enter the lock-screen PIN (4–16 digits).
+6. Adjust as needed: any/all online, Wi-Fi unlock/required, RSSI floor, SIM guard, music lock-screen return, vibration.
+7. Tap **"Deploy & enable" (部署并启用)**; when the status becomes "Running" (运行中) it is in effect.
+8. Lock the screen, then turn it on to verify: it should unlock automatically.
+9. **Afterwards, every time you change any option, go back to the home page and tap "Deploy & enable" once more** (reason in the next section).
+10. Adding this app (and Shizuku) to the battery optimization whitelist, allowing autostart/background running, is recommended.
+
+---
+
+## 7. Why Settings Changes Require Redeployment
+
+Changing a setting "immediately rewrites the config and restarts the daemon", but redeploying performs a more thorough set of actions:
+
+| Action | Auto restart after settings change | Tapping "Deploy & enable" |
+| --- | --- | --- |
+| Rewrite `config.conf` | Yes | Yes |
+| Kill the old daemon + old `logcat` listener | Yes | Yes |
+| Clear the `wu.daemon.d` / `wu.unlock.d` lock directories | Yes | Yes |
+| Clear `wu.lock` / `wu.shot` | Yes | Yes |
+| Clear `wu.state` (failure count/cooldown) | No | Yes |
+| **Clear `wu.present` / `wu.cm` / `wu.kw` (online cache)** | **Yes since 3.3.3** | **Yes since 3.3.3** |
+| Rewrite the daemon scripts `wu-daemon.sh` / `wu-stop.sh` | No | Yes |
+| Keep your settings, device selections, logs | Yes | Yes |
+
+The concrete problem fixed in 3.3.3: older deployments/restarts did not delete `wu.present`, which retained the conclusion "which device was online in the previous round". If the device had actually disconnected but the cache still said online, turning the screen on would trigger a wrong unlock; in theory this could only happen when an unlock was performed quickly right after a disconnect. Deployment and restart now clear it.
+
+**Conclusion: for stability, after changing any option go back to the home page and tap "Deploy & enable" again.**
+
+---
+
+## 8. Config and Runtime Files
+
+### 8.1 `/sdcard/watch-unlock/`
+
+| File | Description |
+| --- | --- |
+| `config.conf` | Main config, written by the app at deployment (see the table below) |
+| `options.conf` | Optional overrides such as the run mode; if absent, deployment writes `RUN_MODE="detached"` |
+| `wu-daemon.sh` | Daemon script (shipped from the APK assets) |
+| `wu-stop.sh` | Stop script: kills only the daemon and logcat, excluding itself and its parent |
+| `wu.log` | Runtime log; rotated to `wu.log.old` above 1 MB |
+
+### 8.2 `config.conf` Fields
+
+| Field | Meaning | Default/Example |
+| --- | --- | --- |
+| `PIN_TEXT` | Lock-screen PIN in plain text | `"1234"` |
+| `PIN_KEYS` | Keycode sequence corresponding to the PIN | `"8 9 10 11"` |
+| `TARGETS` | Bluetooth device list, `enabled\|MAC\|name` separated by `;` | `1\|AA:BB:CC:DD:EE:FF\|Watch` |
+| `WATCH_MODE` | `any` any online / `all` all online | `any` |
+| `WIFI_LIST` | Wi-Fi list, `enabled\|SSID` separated by `;` | `1\|HomeWiFi` |
+| `WIFI_UNLOCK` | Wi-Fi can unlock on its own | `0` |
+| `WIFI_REQUIRED` | Wi-Fi is a required condition | `0` |
+| `SIM_GUARD` | SIM PIN guard | `0` |
+| `RSSI_MIN` | Signal strength floor (0 = no limit) | `0` |
+| `MUSIC_RETURN` | Master switch for music lock-screen return | `0` |
+| `MUSIC_OPEN_APP` | Open the given app after unlocking | `0` |
+| `MUSIC_OPEN_PKG` | Target app package name | empty |
+| `MUSIC_SWIPE` | Swipe right after unlocking | `0` |
+| `DEBOUNCE` | Wi-Fi event debounce (seconds); screen-on is fixed at 2 seconds | `6` |
+| `MAX_FAILS` | Consecutive failures before entering cooldown | `3` |
+| `COOLDOWN` | Cooldown duration (seconds) | `600` |
+
+Common `options.conf` fields:
+
+| Field | Meaning |
+| --- | --- |
+| `RUN_MODE` | `detached` (default, standalone process) / `shizuku` (managed by Shizuku) |
+| `POCKET_GUARD` | Pocket mistouch guard (reserved) |
+| `FAST_SETTLE` | Seconds to wait for the keyboard to settle before injection |
+
+### 8.3 `/data/local/tmp/` Runtime Files
+
+| File/Directory | Purpose | Cleaned when |
+| --- | --- | --- |
+| `wu.state` | Failure count, cooldown deadline, status, pause | Deployment / one-tap cleanup |
+| `wu.lock` | Main process pid (for compatibility display) | Deployment / restart / stop |
+| `wu.daemon.d/` | Atomic directory lock (prevents multiple instances) | Deployment / restart / stop |
+| `wu.unlock.d/` | Cross-process unlock mutex (a fake lock auto-expires after 30 seconds) | End of every unlock / deployment / restart |
+| `wu.shot` | Time of the last injection (1.5-second dedupe) | Deployment / restart |
+| `wu.present` | Bluetooth online determination cache | **Cleared on deployment / restart since 3.3.3** |
+| `wu.cm` / `wu.kw` | MAC / name match cache | **Cleared on deployment / restart since 3.3.3** |
+| `wu.bt` / `wu.hit` | Intermediate Bluetooth query results | One-tap cleanup |
+| `wu.ui` | uiautomator UI dump | Stop / one-tap cleanup |
+| `wu.kill.tmp` | Temporary pid list of the stop script | Deleted before the stop script exits |
+
+---
+
+## 9. Daemon Script Command Interface
+
+Besides resident mode, `wu-daemon.sh` also supports one-shot calls:
+
+| Command | Purpose | Called by |
+| --- | --- | --- |
+| `sh wu-daemon.sh` | Start the resident listener | Deployment / watchdog |
+| `--unlock` | Perform one unlock immediately (independent of whether the resident daemon is alive) | App on receiving the screen-on broadcast |
+| `--present [track]` | Refresh the Bluetooth online cache; with `track` it means the app is listening to broadcasts and the cache can be trusted long-term | App |
+| `--untrack` | Revoke the "trusted cache" flag, query on screen-on afterwards | App (when Bluetooth cannot be listened to) |
+| `--pause <seconds>` | Pause unlocking, write to state | Home page pause button |
+| `--resume` | Cancel the pause | Home page resume button |
+| `--check` | Print diagnostics (target count, matched MAC, online state, RSSI, Wi-Fi, lock state, PIN length, cooldown/pause remaining) | Manual troubleshooting |
+| `--bench` | Measure the time of key commands 3 times in a row (dumpsys / uiautomator / input spawn) | Performance troubleshooting |
+
+The `status` / `reason` in the `--check` output are the most direct troubleshooting basis; for example `disabled` means PIN validation failed and the daemon disabled itself, so verify the password and redeploy.
+
+---
+
+## 10. Unlock Decision Logic
+
+Checked in order; failing any one means skip:
+
+1. `status != disabled`;
+2. Not in a pause period and not in the failure cooldown;
+3. The screen is on and the keyguard is showing;
+4. Bluetooth conditions are met (any/all online, and RSSI not below the floor);
+5. If "Wi-Fi required" is enabled, the current SSID must be in the enabled list;
+6. If "SIM guard" is enabled, the SIM is not on the PIN lock screen;
+7. The cross-process mutex (`wu.unlock.d`) is acquired;
+8. More than 1.5 seconds have passed since the last injection.
+
+Failure handling:
+
+- Each failure increments the count;
+- After `MAX_FAILS=3` consecutive failures it enters a `COOLDOWN=600`-second cooldown during which no attempts are made;
+- It recovers automatically when the cooldown ends; you can also "Resume" in the app or redeploy to reset the state.
+
+Debounce:
+
+- Screen-on is fixed at 2 seconds (so that "screen turns on again right after locking" is not swallowed);
+- Wi-Fi events 6 seconds (configurable);
+- Screen-off events only reset the debounce timer and do not trigger unlocking.
+
+---
+
+## 11. Measured Resource Usage
+
+Test environment: Xiaomi 15 (HyperOS), version 1.0 (the daemon architecture is the same as 3.x). Measurement method: `ps` + `/proc`, `batterystats`, 60-second CPU tick sampling.
+
+| Metric | Result |
+| --- | --- |
+| Background processes | 3 (`sh` daemon + `logcat` + a piped child `sh`) |
+| Resident memory (RSS) | About **9.2 MB** (3.4 MB + 4.4 MB + 1.4 MB) |
+| 60-second CPU | **0 ticks** (equivalent to < 0.017% / single core) |
+| App process | **0** when not running |
+| batterystats total | 19 hours 1 minute 34 seconds ≈ **0.14%** |
+| Alarm wakeups | None |
+| Long-term wakelocks | None |
+
+Reason: the daemon only "blocks reading logcat" — no timers, no polling; the Bluetooth online state is maintained by app broadcasts, and the daemon itself does not query Bluetooth.
+
+---
+
+## 12. Install, Upgrade and Signing
+
+### 12.1 Two Signed Builds
+
+| Build | Signature | Purpose | Can it be installed over the other? |
+| --- | --- | --- | --- |
+| Test build | Test key | Internal testing | **No** |
+| Release build | Release key | Public release | **No** |
+
+The test and release builds are **functionally identical**, only the signature differs, so they cannot be installed over each other. Switching requires uninstalling first, and uninstalling wipes the in-app settings and device list, so note down the PIN, device names, and Wi-Fi names in advance.
+
+### 12.2 Upgrade Rules
+
+| From → To | Method |
+| --- | --- |
+| 3.3 → 3.3.3 | Same release key, **can be installed directly over it**, settings preserved |
+| 3.0 → 3.3.3 | Different signatures, uninstall first |
+| 1.x / 2.0 → 3.3.3 | Different signatures, uninstall first |
+| Test build ↔ release build | Uninstall first |
+
+### 12.3 Signing Commands (the passphrase never enters command history)
+
+```powershell
+$BT = "<Android SDK>\build-tools\36.0.0"
+$env:SMART_KS_PASS = Read-Host "请输入密钥库口令"
+
+& "$BT\apksigner.bat" sign --ks "<密钥库路径>" --ks-key-alias "<别名>" `
+  --ks-pass env:SMART_KS_PASS --key-pass env:SMART_KS_PASS `
+  --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true `
+  --out "watch-unlock-<版本>.apk" "watch-unlock-<版本>-unsigned.apk"
+```
+
+Verification:
+
+```powershell
+& "$BT\apksigner.bat" verify -v --print-certs "watch-unlock-<版本>.apk"
+```
+
+> The repository does not contain any keystore or passphrase; use your own signature.
+
+---
+
+## 13. Building From Source
+
+No Gradle; it uses the native toolchain:
+
+```
+aapt2 compile → aapt2 link → javac → jar → d8 → append dex/assets → zipalign → apksigner
+```
+
+### 13.1 Prerequisites
+
+- JDK 17 (`JAVA_HOME`)
+- Android SDK (`ANDROID_HOME`), requiring **build-tools ≥ 36** and `platforms/android-34`
+  - Reason: Kadb's jar is Java 21 bytecode, which older `d8` cannot handle; `javac 17` cannot read it either, so a stub is used at compile time.
+- Dependency jars in `libs\` (binaries are not committed; see the list in [libs/README.md](libs/README.md))
+
+### 13.2 Dependency List
+
+| Category | Files |
+| --- | --- |
+| Shizuku API | `api-13.1.5-classes.jar`, `provider-13.1.5-classes.jar`, `aidl-13.1.5-classes.jar`, `shared-13.1.5-classes.jar` |
+| Kadb | `kadb-classes.jar` + compile-time `kadb-stub.jar` |
+| Transitive dependencies | `okio-jvm-3.9.1.jar`, `kotlin-stdlib-2.1.0-RC2.jar`, `kotlinx-coroutines-core-jvm-1.9.0.jar` |
+| Bouncy Castle | `bcprov-jdk18on-1.77.jar`, `bcpkix-jdk18on-1.77.jar`, **`bcutil-jdk18on-1.77.jar`** |
+| Others | `spake2-classes.jar`, `hiddenapibypass-classes.jar` |
+
+A missing `bcutil` crashes with `NoClassDefFoundError` during wireless debugging pairing — fixed in 3.0; always include it in builds.
+
+### 13.3 Build Commands
+
+```powershell
+$env:JAVA_HOME    = '<JDK 17>'
+$env:ANDROID_HOME = '<Android SDK>'
+
+# 默认 3.3.3 / versionCode 333，未签名
+powershell -ExecutionPolicy Bypass -File app\build.ps1
+
+# 指定版本
+powershell -ExecutionPolicy Bypass -File app\build.ps1 -VersionName 3.3.3 -VersionCode 333
+```
+
+Signing:
+
+```powershell
+$env:SMART_KS_PASS = '<密钥库口令>'
+powershell -ExecutionPolicy Bypass -File app\build.ps1 `
+  -Keystore '<密钥库>' -KeyAlias '<别名>'
+```
+
+Notes:
+
+- The passphrase is read only from an environment variable; it is never written to disk or to command history;
+- Chinese paths may cause `aapt2`/`javac` exceptions; copying the source to a pure-ASCII temporary directory before building is recommended (the build script itself is unaffected);
+- Build output goes to `app\build\`, with the file name `watch-unlock-<版本>.apk`.
+
+---
+
+## 14. FAQ
+
+**Q1: The status shows "Authorization service disconnected / Shizuku not running" (授权服务已断开 / Shizuku 未运行)**
+The system reclaimed Shizuku. Open Shizuku again and keep it resident in the background, and add Shizuku and this app to the battery optimization whitelist (you can also skip this and let the daemon be a standalone process, since authorization is only needed when options are changed).
+
+**Q2: Deployment succeeds but screen-on does not unlock**
+Troubleshoot in order:
+1. Is the home page status "Running" (运行中)?
+2. In `--check`, is `watch_online` `yes` and is `locked` `yes`?
+3. Is the target device in the "enabled" list?
+4. Is it in a pause/cooldown period?
+5. Did you change settings without redeploying (tap "Deploy & enable" again)?
+
+**Q3: After unlocking it stays on the music lock screen**
+Settings → Music lock-screen return: fill in the music app package name (e.g. `com.netease.cloudmusic`), or enable swipe right. Some ROMs intercept the right-swipe gesture; prefer open-app.
+
+**Q4: The Wi-Fi I want to add is not in the list**
+Only the currently connected Wi-Fi can be added; connect to the target network first, then tap "Add current WiFi".
+
+**Q5: Wireless debugging reports not configured / connection fails**
+Complete pairing and connection on the "Wireless debugging" page first; the pairing port and the connection port are not the same number; pairing must be redone after a reboot. If it still fails, turn "Wireless debugging" off and on again in developer options.
+
+**Q6: Switching the authorization method has no effect**
+Switching tiers requires tapping "Deploy & enable" again, and restarting the app if necessary.
+
+**Q7: No unlocking after rebooting the phone**
+The daemon does not survive a reboot. After boot the app tries to start it automatically, but authorization must be ready: Shizuku must autostart on boot, wireless debugging must be re-enabled and connected, and Root must allow `su`.
+
+**Q8: It says the PIN must be 4–16 digits**
+Confirm that the lock screen uses a digits-only PIN and that its length is between 4 and 16.
+
+**Q9: `state=disabled`**
+After several PIN validation failures the daemon disables itself. Verify the PIN and redeploy.
+
+**Q10: Want a full reset**
+Use "One-tap cleanup" first, then redeploy; if it is still abnormal, uninstall and reinstall (this wipes all settings).
+
+---
+
+## 15. Known Limitations
+
+- **After a reboot the authorization engine** is needed to start the daemon again, so a true "deploy once, effective forever" is not possible;
+- **Wireless debugging** depends on the system port and pairing state, and stops working after a reboot;
+- **Music lock-screen return** varies a lot across ROMs; the right swipe may be taken over by the system;
+- **The Root tier** on some ROMs exposes `su` only to adb, so the app cannot get it;
+- **PIN unlock only**; pattern/mixed passwords are not supported;
+- **HyperOS / ColorOS** and others require allowing autostart and background running, otherwise Shizuku gets reclaimed;
+- When **the system's power saving is extremely aggressive** screen-on events may be delayed; adding it to the whitelist is recommended;
+- **Cannot be installed below 8.0** (see [Section 2](#2-supported-platforms-and-hard-limits)).
+
+---
+
+## 16. Security and Privacy
+
+- The app injects the lock-screen PIN into the system. **Do not use it on shared or untrusted devices.**
+- The PIN is stored in the app's private directory `SharedPreferences` and in `/sdcard/watch-unlock/config.conf`;
+  - Other apps cannot read the app's private directory;
+  - The config file on `/sdcard` is also unreadable by other apps without root (scoped storage restrictions), but **anyone with shell/root access can read it**.
+- The app does not upload any data over the network; it is a fully local app; wireless debugging connects only to the local `127.0.0.1` port.
+- Enabling "SIM PIN guard" is recommended, to avoid injecting the phone PIN into the SIM by mistake;
+- Using the pause feature as needed is recommended, to avoid automatic unlocking when it is not wanted;
+- Logs do not record the PIN in plain text, only the PIN length and status.
+
+---
+
+## 17. Versions and Changelog
+
+| Version | Main contents |
+| --- | --- |
+| **3.3.3** | Fixed wrong unlocks caused by deployment/restart reusing a stale online cache; deployment and restart now clear `wu.present` / `wu.cm` / `wu.kw`; added the "redeploy after changes" reminder to the settings page and the announcement board; added important reminders and a changelog to the announcement board |
+| 3.3 | Signed with the release key; features identical to 3.0 |
+| 3.0 | Added built-in wireless debugging (no Shizuku, no root) and the Root tier; music lock-screen return, vibration feedback, announcement board, built-in ADB console; fixed the crash caused by the missing `bcutil` |
+| 2.0 | Three-tier authorization framework finalized, settings page redesigned as cards (not formally distributed) |
+| 1.1 | Independent Wi-Fi unlock and required condition, SIM PIN guard, custom pause duration; three-level settings page and log page, Chinese/English bilingual; fixed Android 12 compatibility issues |
+| 1.0 | First usable version: Shizuku authorization, screen-on Bluetooth unlock, Wi-Fi unlock, logs |
+
+For more detailed fix notes see [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## 18. Code Structure
+
+```
+app/
+  AndroidManifest.xml            权限、Activity/Service/Receiver 声明
+  java/com/watchunlock/app/
+    MainActivity.java            主页：状态卡、设备/Wi-Fi 列表、部署、暂停、清理、入口
+    SettingsActivity.java        设置：授权方式、震动、音乐返回、语言、日志/公告入口
+    LogActivity.java             日志查看、复制、清空
+    AnnounceActivity.java        公告栏：版本说明、重要提醒、使用注意、更新日志、鸣谢
+    AdbActivity.java             无线调试：配对/连接/断开、ADB 命令行
+    MonitorService.java          前台服务：通知、亮屏/蓝牙/Wi-Fi 广播、60 秒看门狗
+    BootReceiver.java            开机拉起前台服务
+    Prefs.java                   应用侧配置（SharedPreferences）
+    Privilege.java               授权引擎抽象（统一 run / writeFile）
+    ShizukuBridge.java           Shizuku：远程 shell、长驻进程、权限申请
+    RootBridge.java              Root：su -c 执行
+    AdbBridge.java               无线调试：Kadb 配对/连接/执行
+    Scripts.java                 部署、配置生成、启停、状态读取、清理
+    I18n.java                    中英双语
+  res/                           图标、字符串（values / values-en）、语言配置
+  assets/wu-daemon.sh            守护脚本（解锁核心，约 27 KB）
+  assets/wu-stop.sh              停止脚本
+  build.ps1                      手工构建脚本
+```
+
+Key design decisions:
+
+- The three authorization tiers are abstracted behind one execution interface, so the upper layers do not care which tier is underneath;
+- Config delivery and unlock execution are fully separated: the app only writes config, all unlocking happens in the daemon;
+- All runtime state is expressed with files + directory locks, with no database or resident socket dependency;
+- Event-driven: no polling, no Alarm, no wakelock.
+
+---
+
+## 19. Comparison With Stock and Vendor Solutions
+
+Comparison targets: ① Google's stock **Extend Unlock** (formerly Smart Lock trusted devices); ② "smart unlock / Bluetooth device unlock" implementations by Chinese OEMs (Xiaomi, Huawei, OPPO, vivo, etc.).
+
+This app does not use the system `TrustAgent` API; it injects the PIN as **shell (uid 2000)**, thereby sidestepping the hard limits of both system solutions.
+
+### 19.1 Overview
+
+| Dimension | Google Extend Unlock | Vendor smart unlock | This app |
+| --- | --- | --- | --- |
+| Can it unlock an already locked screen | **No**, it only keeps an already-unlocked state (up to 4 hours) | Yes (but some only accept their own wearables) | **Yes**: injects the PIN as soon as the screen turns on after locking |
+| Supported devices | Any paired Bluetooth (limited by the system and GMS) | **May only accept its own watch/band** | **Any paired Bluetooth**: earbuds, speakers, car head units, third-party bands all work |
+| GMS dependency | Required; models without GMS in China usually have no entry | Not required, but tied to its own ROM | **Not required**: fully usable on Chinese ROMs |
+| Wi-Fi conditions | None | Basically none | **Yes**: Wi-Fi can unlock on its own, or serve as a required condition for Bluetooth |
+| Multi-device logic | None | None (usually a single device) | Two modes: **any online / all online** |
+| RSSI (distance) limit | None | Some have it | Yes; below the threshold it is treated as offline |
+| Authorization | Built into the system | Built into the system | Shizuku / Root / built-in wireless debugging |
+| Validity period | Re-validated after about 4 hours | Decided by vendor policy | No validity period, until the process ends or the phone reboots |
+| Observability | Almost no user-facing logs | Almost none | Full logs: trigger conditions, timings, success/failure reasons, `--check`, `--bench` |
+| Compatible systems | Depends on GMS and Google policy | Bound to its own ROM version | Theoretically any Android 8.0+; during testing HarmonyOS 4.2, EMUI, HyperOS, LineageOS and others all worked |
+| Main weaknesses | Does not work after locking, no Wi-Fi/multi-device, often missing on Chinese models | Ecosystem lock-in, fixed features, strongly ROM-bound | Digits-only PIN, PIN stored in plain text on disk, authorization needed again after a reboot |
+
+### 19.2 Versus Google Stock (Extend Unlock / Smart Lock)
+
+Hard limits of the stock solution:
+
+1. **Since Android 10, trusted devices no longer unlock a locked phone**; they only "keep it unlocked" after you have unlocked it yourself, for up to about 4 hours; after a manual lock you must enter the password yourself even if the watch is connected.
+2. **GMS dependency**: models sold in China without Google services usually lack the entry, and some Chinese ROMs hide it entirely.
+3. **No Wi-Fi conditions and no multi-device combination logic**.
+
+This app:
+
+- Truly unlocks **while the screen is locked**: once the screen is off and locked, as long as the Bluetooth/Wi-Fi conditions are met, turning the screen on automatically enters the PIN; it is not constrained by the Android 10 trust-agent rules and has **no 4-hour validity period**;
+- Does not depend on GMS;
+- A finer condition model: multiple Bluetooth devices, RSSI floor, independent Wi-Fi unlock or required condition, SIM guard, pause;
+- Has safeguards: event debounce (screen-on 2 seconds / Wi-Fi 6 seconds), consecutive failure cooldown (3 failures / 600 seconds), SIM PIN injection refusal, cross-process mutex + 1.5-second dedupe, single-instance directory lock;
+- Observable: each unlock records the `lock / presence / inject` three-stage timings and the trigger source.
+
+### 19.3 Versus Chinese OEMs' "Bluetooth Smart Unlock"
+
+Hard limits of vendor solutions:
+
+1. **Ecosystem lock-in**: they may only accept their own brand's watch/band; third-party earbuds, speakers and other brands' bands cannot join the trusted list (they use proprietary pairing and identity verification, so third parties cannot plug in).
+2. **Fixed features**: no Wi-Fi linkage, so constraints like "only unlock at home" cannot be built.
+3. **No multi-device combination**: usually only a single device is supported, so "unlock only when multiple devices are online at once" is impossible.
+4. **Strong ROM binding**: behavior may change after a system update, and some models simply have the switch removed.
+
+This app:
+
+- **No brand lock-in**: any paired Bluetooth device can be checked;
+- **Free combination of conditions**, for example:
+  - Scenario A: unlock when connected to the home Wi-Fi, no Bluetooth needed;
+  - Scenario B: unlock only when the band is online **and** connected to the home Wi-Fi (away from home it does not unlock even if Bluetooth is connected);
+  - Scenario C: unlock only when multiple Bluetooth devices are **all online**, for higher security;
+- **Wi-Fi connection detection** is an independent capability: it reads the currently connected SSID (`wifi_trusted` validation), and can be used either as a trigger source (triggered once when connected to a trusted Wi-Fi and the screen is on and locked) or as a required condition; the list only accepts the currently connected network, avoiding manual typos;
+- Cross-vendor, cross-ROM: HyperOS, LineageOS and Chinese models without GMS all run it;
+- After unlocking it can open a given app automatically, or swipe right back to the original screen (friendlier for music lock screens);
+- Three authorization paths cover different users: Shizuku (default), Root, built-in wireless debugging (no root, no Shizuku, and no computer).
+
+### 19.4 Architectural Differences
+
+1. **Unlock logic lives in a shell script; the app is just a config shell**: the daemon keeps working after the app is killed by the system; when the app is absent, the online cache automatically degrades to "query Bluetooth on screen-on" instead of failing outright (`present_ok_fast()` checks `app_alive`).
+2. **Cache combined with live queries**: the app listens to Bluetooth/Wi-Fi broadcasts to maintain the online cache, and screen-on reads the cache first; when the cache is untrustworthy or the app is absent it queries live. Measured unlock time is **550–1070 ms** (Xiaomi 15 / HyperOS, version 1.0), and `--bench` is built in for re-measurement.
+3. **Avoiding lock-screen compatibility pitfalls**: it uses `wm dismiss-keyguard` to bring up the PIN keyboard directly instead of simulating an upward swipe, so music lock screens and third-party lock screens cannot swallow the gesture.
+4. **Complete self-check and debugging chain**: `--check` outputs conditions and state, `--bench` measures each command's time, and logs rotate automatically; when something goes wrong you can pin it down to "Bluetooth condition / lock detection / injection". The stock system solution offers almost no user-accessible debugging.
+
+### 19.5 Boundaries and Honest Weaknesses
+
+- Supports **digits-only PIN** only; pattern/mixed passwords cannot be injected;
+- The PIN is stored in plain text in config files (the app's private directory + `/sdcard/watch-unlock/config.conf`), readable by anyone with shell/root access;
+- May **stop working after a reboot**, requiring it to be re-enabled and re-paired;
+- It cannot read a wearable's wear sensor, so it may unlock as long as Bluetooth is connected (consistent with most vendors' normal mode);
+- It is not a system-level `TrustAgent`, and its security boundary is lower than vendors' TEE-verified schemes — it addresses "usability/freedom", not "higher security".
+
+---
+
+## 20. License and Credits
+
+### Open-Source Components
+
+- [Shizuku](https://github.com/RikkaApps/Shizuku-API) (Apache-2.0): root-free shell authorization channel
+- [Kadb](https://github.com/flyfishxu/Kadb) (Apache-2.0): in-app wireless debugging
+- [Bouncy Castle](https://www.bouncycastle.org/) (Bouncy Castle Licence): certificate and key generation
+- [Okio](https://github.com/square/okio), [Kotlin](https://kotlinlang.org/), [kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) (Apache-2.0)
+- hiddenapibypass, spake2: follow their respective upstream licenses
+
+For the complete licenses see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Disclaimer
+
+This project is only for automating personal devices. Any consequences arising from the use of this software (including but not limited to the device being locked, data loss, violation of local laws and regulations or device warranty terms) are borne solely by the user; the author assumes no responsibility.
+
+### License
+
+[BSD 3-Clause](LICENSE) © 2026 ynhyttmy
+
+###Note: for reference only; points not covered due to oversight are not ruled out

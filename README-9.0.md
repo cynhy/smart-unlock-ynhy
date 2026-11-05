@@ -1,5 +1,7 @@
 # Smart Unlock · 详细说明
 
+[简体中文](README-9.0.md) | [English](README-9.0.en.md)
+
 ---
 
 ## 目录
