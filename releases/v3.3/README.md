@@ -1,0 +1,66 @@
+# Smart Unlock 3.3 · 亮屏自动解锁（推荐版）
+
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](../../LICENSE)
+![Android](https://img.shields.io/badge/Android-8.0%2B-brightgreen)
+![Authorize](https://img.shields.io/badge/Authorize-Shizuku%20%7C%20Root%20%7C%20Wireless%20ADB-success)
+
+连着手表或耳机时，手机一亮屏就自动输入锁屏 PIN 并解除锁屏。支持 Shizuku、Root、内置无线调试三档授权，**不装 Shizuku、不 root 也能用**。
+
+本目录是 **3.3 版本**的说明与发布信息。完整项目介绍、原理与构建方式见仓库根目录的 [README](../../README.md)。
+
+## 适用平台
+
+- **Android 8.0 ～ 16**（minSdk 26，targetSdk 34）
+- **内置无线调试需要 Android 11 及以上**
+- 实测：Android 12、13、14、16（LineageOS / HyperOS）
+- 授权方式：Shizuku（默认）/ Root / 内置无线调试
+
+## 功能
+
+**继承 1.1 的全部能力**
+
+- 亮屏自动解锁，实测 550～1070ms
+- 任意已配对蓝牙设备，逐设备勾选，任一在线或全部在线
+- Wi-Fi 独立解锁 + Wi-Fi 必要条件
+- SIM 卡 PIN 防呆
+- 临时暂停、三级设置页、日志页、一键清理、中英双语
+
+**3.3 新增**
+
+| 功能 | 成熟度 | 说明 |
+| --- | --- | --- |
+| 三档授权 | Shizuku / Root 稳定，无线调试中等 | 设置页随时切换，切换后需重新部署 |
+| 音乐锁屏返回 | 中等 | 可按包名打开指定应用，或向右滑动；同时开启时优先打开应用 |
+| 震动反馈 | 稳定 | 按键与开关轻微震动，可关闭 |
+| 公告栏 | 稳定 | 测试包说明、注意事项、开源组件鸣谢（可查看许可协议） |
+| ADB 命令行 | 中等 | 无线调试页顶部可直接执行 `adb shell` 命令，需先完成配对连接 |
+| Root 授权 | 稳定（视设备） | 直接 `su -c`，不需要 Magisk 模块 |
+
+## 已知问题
+
+- **无线调试**：配对端口与连接端口不同；系统重启后端口变化，需要重新配对/连接。连接失败时可在开发者选项关闭再打开「无线调试」。
+- **音乐锁屏返回**：部分 ROM 的音乐锁屏会截获右滑手势，建议改用「打开指定应用包名」。
+- **Root 档**：开发者选项的 Root access 需设为「Apps and ADB」，否则显示 `Root unavailable`。
+- **切换授权方式**：需要重新点「部署并启用」。
+- **后台限制**：HyperOS / ColorOS 需允许自启动与后台运行，否则 Shizuku 会被回收。
+
+## 安装
+
+1. 从 [Releases](../../../releases) 下载 `3.3` 的 APK（正式密钥签名）。
+2. 安装后打开应用，授予通知与「附近的设备」权限。
+3. 设置 → 授权方式，选择 Shizuku / Root / 无线调试 并完成授权。
+4. 主页添加目标设备或当前 Wi-Fi，点「部署并启用」。
+
+## 升级提示
+
+- 3.3 与 1.1 / 2.0 签名不同，**必须先卸载旧版**再安装。
+- 3.3 与 3.0（测试签名）同样不能互相覆盖。
+- 卸载会清空设备勾选与设置，升级前请记录 PIN、设备名称与 Wi-Fi 名称。
+
+## 构建
+
+见根目录 [README · 构建](../../README.md#构建)。无线调试档需要 `libs\` 下的 Kadb 与 Bouncy Castle 依赖，注意 `bcutil` 不可缺失。
+
+## 许可证
+
+[BSD 3-Clause](../../LICENSE) © 2026 ynhyttmy
