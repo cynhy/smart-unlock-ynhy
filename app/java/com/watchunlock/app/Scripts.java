@@ -1,4 +1,4 @@
-package com.watchunlock.app;
+﻿package com.watchunlock.app;
 
 import android.content.Context;
 
@@ -26,6 +26,9 @@ public final class Scripts {
     public static final String STOP = DIR + "/wu-stop.sh";
     public static final String LOG = DIR + "/wu.log";
     public static final String STATE = "/data/local/tmp/wu.state";
+    /** 在线判定缓存。重新部署/重启时必须清掉，否则会沿用上一轮的结论误判。 */
+    public static final String PRESENT = "/data/local/tmp/wu.present";
+    private static final String RUNTIME_CACHE = PRESENT + " /data/local/tmp/wu.cm /data/local/tmp/wu.kw";
 
     private Scripts() {
     }
@@ -225,7 +228,7 @@ public final class Scripts {
     public static Report restart() {
         Privilege.run("sh " + STOP, 15000);
         Privilege.run("rm -rf /data/local/tmp/wu.daemon.d /data/local/tmp/wu.unlock.d; "
-                + "rm -f /data/local/tmp/wu.lock /data/local/tmp/wu.shot", 8000);
+                + "rm -f /data/local/tmp/wu.lock /data/local/tmp/wu.shot " + RUNTIME_CACHE, 8000);
         return start();
     }
 
@@ -277,7 +280,7 @@ public final class Scripts {
         r = Privilege.run("sh " + STOP, 15000);
         detail.append("stop: ").append(r.code).append('\n');
         r = Privilege.run("rm -rf /data/local/tmp/wu.daemon.d /data/local/tmp/wu.unlock.d; "
-                + "rm -f " + STATE + " /data/local/tmp/wu.lock /data/local/tmp/wu.shot", 8000);
+                + "rm -f " + STATE + " /data/local/tmp/wu.lock /data/local/tmp/wu.shot " + RUNTIME_CACHE, 8000);
         if (!r.ok()) detail.append("clean: ").append(r.text()).append('\n');
         r = Privilege.run("[ -f " + OPTS + " ] || printf 'RUN_MODE=\"detached\"\\n' > " + OPTS, 8000);
         if (!r.ok()) detail.append("options: ").append(r.text()).append('\n');

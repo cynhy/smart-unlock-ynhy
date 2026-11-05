@@ -40,20 +40,38 @@ public class AnnounceActivity extends Activity {
 
         LinearLayout testCard = card();
         TextView test = new TextView(this);
-        test.setText(I18n.t("这是测试应用包（2.0）",
-                "This is a test build (2.0)"));
+        test.setText(I18n.t("当前版本 3.3.3（测试包 / 正式包双签）",
+                "Current build: 3.3.3 (test and official signing)"));
         test.setTextSize(16);
         test.setTextColor(C_WARN);
         test.getPaint().setFakeBoldText(true);
         testCard.addView(test);
-        testCard.addView(body(I18n.t("本版本使用测试密钥签名，不是正式发布版本。"
-                        + "测试包与正式包签名不同，两者无法直接覆盖安装；切换时需要先卸载旧版本，"
-                        + "卸载会清除应用内的设置与设备列表，请提前记录。",
-                "This build is signed with a test key and is not an official release. "
-                        + "The test and official builds use different signatures and cannot overwrite each "
-                        + "other; switching requires uninstalling the old build, which clears in-app settings "
+        testCard.addView(body(I18n.t("本应用同时提供测试签名包与正式签名包，两者功能一致、签名不同，"
+                        + "无法互相覆盖安装；切换时需要先卸载旧版本，卸载会清除应用内的设置与设备列表，请提前记录。",
+                "Both a test-signed and an officially signed build are provided. They share the same "
+                        + "features but use different signatures, so neither can overwrite the other; "
+                        + "switching requires uninstalling the old build, which clears in-app settings "
                         + "and the device list, so note them down first.")));
         root.addView(testCard, gap(12));
+
+        LinearLayout tip = card();
+        tip.addView(sectionTitle(I18n.t("重要提醒", "Important")));
+        tip.addView(body(I18n.t(
+                "1. 为了稳定，改动任何选项后请回到主页重新点「部署并启用」。\n\n"
+                        + "2. 「部署并启用」会清理上一轮的运行残留（旧守护进程、旧 logcat 监听、"
+                        + "跨进程锁与在线判定缓存），但不会清除你的设置、设备勾选与日志。\n\n"
+                        + "3. 3.3.3 起，部署与重启都会清掉旧的在线缓存，避免出现"
+                        + "「设备其实已断开却仍解锁」的情况。\n\n"
+                        + "4. 切换授权方式后同样需要重新部署一次。",
+                "1. For stability, return to the home screen and tap “Deploy & enable” again "
+                        + "after changing any option.\n\n"
+                        + "2. Deploy cleans the leftovers of the previous run (old daemon, old logcat "
+                        + "listener, cross-process locks and the online cache) but never wipes your "
+                        + "settings, selected devices or logs.\n\n"
+                        + "3. Since 3.3.3, deploy and restart also clear the stale online cache, so the "
+                        + "app no longer unlocks while the target device is actually disconnected.\n\n"
+                        + "4. Switching the privilege engine also requires deploying again.")));
+        root.addView(tip, gap(12));
 
         LinearLayout notes = card();
         notes.addView(sectionTitle(I18n.t("使用注意", "Notes")));
@@ -92,6 +110,50 @@ public class AnnounceActivity extends Activity {
                         + "8. Unlocking relies on screen-on events. Aggressive battery saving may delay "
                         + "or break it; add this app to the battery optimization whitelist.")));
         root.addView(notes, gap(12));
+
+        LinearLayout changelog = card();
+        changelog.addView(sectionTitle(I18n.t("更新日志", "Changelog")));
+        changelog.addView(body(I18n.t(
+                "3.3.3\n"
+                        + "· 修复：重新部署或重启后仍沿用上一轮的在线缓存，可能出现「设备已断开却仍解锁」\n"
+                        + "· 优化：部署与重启时一并清理在线缓存\n"
+                        + "· 新增：设置页提示「改动任何选项后请重新部署并启用」\n"
+                        + "· 新增：公告栏「重要提醒」与「更新日志」\n\n"
+                        + "3.3\n"
+                        + "· 正式密钥签名版本，功能与 3.0 一致\n\n"
+                        + "3.0\n"
+                        + "· 新增内置无线调试（不依赖 Shizuku、不需要 root）与 Root 授权档\n"
+                        + "· 新增音乐锁屏返回、震动反馈、公告栏、内置 ADB 命令行\n"
+                        + "· 修复：无线调试缺少 bcutil 导致的崩溃\n\n"
+                        + "2.0\n"
+                        + "· 三档授权框架定型，设置页改为卡片式布局（未正式分发）\n\n"
+                        + "1.1\n"
+                        + "· Wi-Fi 独立解锁与必要条件、SIM 卡 PIN 防呆、暂停时长自定义\n"
+                        + "· 三级设置页与日志页、中英双语\n"
+                        + "· 修复 Android 12 兼容问题\n\n"
+                        + "1.0\n"
+                        + "· 首个可用版本：Shizuku 授权、亮屏蓝牙解锁、Wi-Fi 解锁、日志",
+                "3.3.3\n"
+                        + "· Fix: deploy/restart reused the previous online cache, which could unlock "
+                        + "while the target device was actually disconnected\n"
+                        + "· Tweak: clear the online cache on deploy and restart\n"
+                        + "· New: settings hint to deploy again after changing any option\n"
+                        + "· New: Important notices and this changelog\n\n"
+                        + "3.3\n"
+                        + "· Officially signed build with the same features as 3.0\n\n"
+                        + "3.0\n"
+                        + "· Added built-in wireless debugging (no Shizuku, no root) and the Root engine\n"
+                        + "· Added music lock-screen return, haptic feedback, announcements, ADB console\n"
+                        + "· Fix: crash caused by the missing bcutil dependency\n\n"
+                        + "2.0\n"
+                        + "· Three-engine framework and card-based settings (not officially released)\n\n"
+                        + "1.1\n"
+                        + "· Standalone Wi-Fi unlock and Wi-Fi requirement, SIM PIN guard, custom pause\n"
+                        + "· Three-level settings and log screens, Chinese/English UI\n"
+                        + "· Fix: Android 12 compatibility\n\n"
+                        + "1.0\n"
+                        + "· First release: Shizuku engine, screen-on Bluetooth unlock, Wi-Fi unlock, logs")));
+        root.addView(changelog, gap(12));
 
         LinearLayout credits = card();
         TextView creditsTitle = sectionTitle(I18n.t("开源组件（点击查看开源协议）",
