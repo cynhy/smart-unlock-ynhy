@@ -1,0 +1,8 @@
+# 换行符规范：脚本按各自平台的约定检出
+*.sh   text eol=lf
+*.ps1  text eol=crlf
+*.xml  text eol=lf
+*.java text eol=lf
+*.md   text eol=lf
+*.png  binary
+*.jar  binary

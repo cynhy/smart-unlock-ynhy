@@ -1,0 +1,33 @@
+# 构建产物
+build/
+*.apk
+*.apk.idsig
+*.aab
+*.dex
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# 签名与密钥（绝对不要提交）
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+keystore.properties
+*.pass
+
+# 依赖二进制（见 libs/README.md 自行获取）
+libs/*.jar
+
+# 本机配置与运行数据
+config.json
+pin.dat
+*.log
+local.properties
+
+# IDE / 工具
+.idea/
+.vscode/
+.gradle/
+captures/
+*.iml
