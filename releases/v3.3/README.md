@@ -1,12 +1,14 @@
-# Smart Unlock 3.3 · 亮屏自动解锁（推荐版）
+# Smart Unlock 3.3 · 亮屏自动解锁（历史版本，推荐 3.3.3）
 
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](../../LICENSE)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-brightgreen)
 ![Authorize](https://img.shields.io/badge/Authorize-Shizuku%20%7C%20Root%20%7C%20Wireless%20ADB-success)
 
-连着手表或耳机时，手机一亮屏就自动输入锁屏 PIN 并解除锁屏。支持 Shizuku、Root、内置无线调试三档授权，**不装 Shizuku、不 root 也能用**。
+当在连接指定蓝牙设备时，手机一亮屏就自动输入锁屏 PIN 并解除锁屏。支持 Shizuku、Root、内置无线调试三档授权，**不装 Shizuku、不 root 也能用**。
 
 本目录是 **3.3 版本**的说明与发布信息。完整项目介绍、原理与构建方式见仓库根目录的 [README](../../README.md)。
+
+> **推荐使用 3.3.3**：它是 3.3 的修复版，修复了「部署/重启后沿用旧在线缓存、设备已断开却仍解锁」的问题，与 3.3 同签名，可直接覆盖安装。
 
 ## 适用平台
 
