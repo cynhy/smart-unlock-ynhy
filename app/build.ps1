@@ -1,7 +1,7 @@
 ﻿# 手工构建 APK（不依赖 Gradle）：aapt2 -> javac -> d8 -> zipalign -> apksigner
 #
 # 用法示例：
-#   powershell -ExecutionPolicy Bypass -File app\build.ps1                       # 3.3，未签名
+#   powershell -ExecutionPolicy Bypass -File app\build.ps1                       # 3.3.3，未签名
 #   powershell -ExecutionPolicy Bypass -File app\build.ps1 -VersionName 3.0 -VersionCode 30 -NoKadb
 #
 # 前置条件：
@@ -13,8 +13,8 @@
 # 口令只从环境变量读取，不落盘、不写入命令行历史。
 
 param(
-  [string]$VersionName = '3.3',
-  [int]$VersionCode = 33,
+  [string]$VersionName = '3.3.3',
+  [int]$VersionCode = 333,
   [string]$Keystore = '',
   [string]$KeyAlias = 'phone unlock',
   [switch]$NoKadb,

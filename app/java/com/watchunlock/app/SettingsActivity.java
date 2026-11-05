@@ -61,8 +61,9 @@ public class SettingsActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText(I18n.t("修改后会自动重启守护；首次部署后生效。",
-                "Changes restart the daemon automatically and apply after the first deploy."));
+        sub.setText(I18n.t("修改后会立即重写配置并重启守护。为了稳定，改动任何选项后请回到主页重新点「部署并启用」。",
+                "Changes rewrite the config and restart the daemon. For stability, return to the home "
+                        + "screen and tap “Deploy & enable” again after changing any option."));
         sub.setTextSize(12);
         sub.setTextColor(C_SUB);
         LinearLayout.LayoutParams lpSub = new LinearLayout.LayoutParams(-1, -2);
