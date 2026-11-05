@@ -24,7 +24,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $HERE = Split-Path -Parent $MyInvocation.MyCommand.Path
-$LIB = Join-Path $HERE 'libs'
+$LIB = Join-Path (Split-Path $HERE -Parent) 'libs'
 $OUT = Join-Path $HERE 'build'
 
 if (-not $env:JAVA_HOME) { throw '请先设置 JAVA_HOME（JDK 17）' }
