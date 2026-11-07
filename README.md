@@ -3,7 +3,7 @@
 # Smart Unlock
 
 **设备在旁，亮屏即解。**  
-用已配对的蓝牙设备（手表 / 耳机 / 手环）作为钥匙：设备在线时，手机亮屏自动输入锁屏 PIN；设备不在线时，什么都不做。
+用已配对的蓝牙设备（手表 / 耳机 / 手环）作为钥匙：设备在线时，手机亮屏自动输入锁屏 PIN（现在可以只在蓝牙设备连接的时候不开启密码）；设备不在线时，什么都不做。
 
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-2ea44f)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84)]()
