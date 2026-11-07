@@ -11,9 +11,9 @@ Use a paired Bluetooth device (watch / earbuds / band) as a key: while it is onl
 [简体中文](README.md) | English
 
 > [!IMPORTANT]
-> **Only 1.1, 3.3.3 and 6.3.6 are marked stable.** Other signed builds are kept as historical / test releases.
+> **Only 1.1, 3.3.3 and 6.3.6，6.4 6.4.3 are marked stable.** Other signed builds are kept as historical / test releases.
 >
-> **Wireless debugging: every build before 6.4.0 has a known bug and may fail to pair or connect.** Use **6.4.0 or later** (the current beta is **6.4.3**) if you need wireless debugging; 6.4.0 fixes service discovery, connect-port discovery and the notification send button. **6.3.9 is a beta** (versionCode 639) but its wireless debugging is unreliable — do not rely on it. Unsigned APKs are never uploaded to Releases.
+> **Wireless debugging: every build before 6.4.0 has a known bug and may fail to pair or connect.** Use **6.4.0 or later** ) if you need wireless debugging; 6.4.0 fixes service discovery, connect-port discovery and the notification send button. **6.3.9 is a beta** (versionCode 639) but its wireless debugging is unreliable — do not rely on it. Unsigned APKs are never uploaded to Releases.
 
 ## What it does
 
