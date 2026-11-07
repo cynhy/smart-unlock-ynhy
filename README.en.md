@@ -25,17 +25,10 @@ Use a paired Bluetooth device (watch / earbuds / band) as a key: while it is onl
 
 Smart Unlock is a small Android tool: it treats “a Bluetooth device is online” as the unlock condition and injects the PIN through a shell when the screen wakes, saving you from typing it every time. The whole chain runs locally — **the app makes no network requests and uploads nothing**.
 
-Good for:
-
-- Watches / bands / earbuds worn all day, so you want the phone unlocked as soon as the screen wakes;
-- Development devices, spare phones, or a phone kept in a fixed place at home;
-- Anyone who wants one of Shizuku / Root / built-in ADB and does not want an Xposed module.
-
 Not suitable for:
 
 - Pattern or mixed-password lock screens (only a 4–16 digit numeric PIN is supported);
 - Users with very high security requirements who cannot accept shell-level access;
-- Strong “lock immediately when the device leaves” scenarios (this project only unlocks; it never locks).
 
 ## 6.4.3 update (beta)
 
