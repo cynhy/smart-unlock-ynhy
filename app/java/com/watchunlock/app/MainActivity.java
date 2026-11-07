@@ -59,8 +59,14 @@ public class MainActivity extends Activity {
     private final AtomicBoolean busy = new AtomicBoolean(false);
 
     private TextView tvDot, tvDaemon, tvShizuku, tvCond, tvNow;
+    private TextView tvProtect;
+    private Switch swProtect;
     private LinearLayout devBox, wifiBox;
-    private Switch swAll, swWifiUnlock, swWifiReq, swHeld;
+    private Switch swAll, swWifiUnlock, swWifiReq, swHeld, swExtend;
+    private TextView tvExtend;
+    private Button btnExtendRestore;
+    private boolean extendActiveNow = false;
+    private boolean extendSyncing = false;
     private EditText etPin, etRssi, etPause;
     private boolean syncing = false;
 
@@ -95,7 +101,27 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // 从系统设置授权返回后，自动恢复设备列表（不必退出重进）
+        boolean now = Build.VERSION.SDK_INT < 31
+                || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+        if (now && !grantedBt) {
+            grantedBt = true;
+            deniedDialogShown = false;
+            buildDevices();
+        }
         refresh();
+        refreshProtectCard();
+        if (swProtect != null && swProtect.isChecked() != Prefs.protectEnabled(this)) {
+            syncing = true;
+            swProtect.setChecked(Prefs.protectEnabled(this));
+            syncing = false;
+        }
+        if (swExtend != null && swExtend.isChecked() != Prefs.extendUnlock(this)) {
+            extendSyncing = true;
+            swExtend.setChecked(Prefs.extendUnlock(this));
+            extendSyncing = false;
+        }
+        refreshExtendCard();
     }
 
     @Override
@@ -163,23 +189,38 @@ public class MainActivity extends Activity {
         sub.setTextColor(C_SUB);
         LinearLayout.LayoutParams lpSub = new LinearLayout.LayoutParams(-2, -2);
         lpSub.topMargin = dp(4);
-        lpSub.bottomMargin = dp(14);
         root.addView(sub, lpSub);
 
-        // 状态卡
+        // 设置改动会热重载；只有首次部署、切换授权方式或升级后才需要重新部署
+        TextView deployNote = new TextView(this);
+        deployNote.setText(I18n.t("提示：设置改动会自动生效；首次使用、切换授权方式或升级后，请点「部署并启用」。",
+                "Note: settings are applied automatically. Tap “Deploy & enable” for the first run, "
+                        + "after switching the engine, or after an upgrade."));
+        deployNote.setTextSize(12);
+        deployNote.setTextColor(0xFFB45309);
+        LinearLayout.LayoutParams lpNote = new LinearLayout.LayoutParams(-1, -2);
+        lpNote.topMargin = dp(6);
+        lpNote.bottomMargin = dp(14);
+        root.addView(deployNote, lpNote);
+
+        // 状态卡 + 增强防护：压缩状态卡，右侧并排一个总开关
+        LinearLayout topRow = new LinearLayout(this);
+        topRow.setOrientation(LinearLayout.HORIZONTAL);
+
         LinearLayout status = card();
+        status.setPadding(dp(12), dp(10), dp(12), dp(10));
         tvDot = new TextView(this);
         tvDot.setText("●");
-        tvDot.setTextSize(14);
+        tvDot.setTextSize(13);
         tvDot.setTextColor(C_SUB);
         tvDaemon = new TextView(this);
         tvDaemon.setText(I18n.t("正在读取状态…", "Reading status…"));
-        tvDaemon.setTextSize(16);
+        tvDaemon.setTextSize(14);
         tvDaemon.setTextColor(C_TEXT);
         tvDaemon.getPaint().setFakeBoldText(true);
         tvShizuku = new TextView(this);
         tvShizuku.setText("");
-        tvShizuku.setTextSize(12);
+        tvShizuku.setTextSize(11);
         tvShizuku.setTextColor(C_SUB);
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
@@ -189,26 +230,59 @@ public class MainActivity extends Activity {
         headText.setOrientation(LinearLayout.VERTICAL);
         headText.addView(tvDaemon);
         headText.addView(tvShizuku);
-        LinearLayout.LayoutParams lpH = new LinearLayout.LayoutParams(-2, -2);
-        lpH.leftMargin = dp(8);
+        LinearLayout.LayoutParams lpH = new LinearLayout.LayoutParams(0, -2, 1);
+        lpH.leftMargin = dp(6);
         head.addView(headText, lpH);
         status.addView(head);
 
         tvCond = new TextView(this);
         tvCond.setText(I18n.t("解锁条件：读取中…", "Unlock conditions: reading…"));
-        tvCond.setTextSize(13);
+        tvCond.setTextSize(11);
         tvCond.setTextColor(C_TEXT);
         tvNow = new TextView(this);
         tvNow.setText("");
-        tvNow.setTextSize(12);
+        tvNow.setTextSize(10);
         tvNow.setTextColor(C_SUB);
         LinearLayout.LayoutParams lpC = new LinearLayout.LayoutParams(-1, -2);
-        lpC.topMargin = dp(10);
+        lpC.topMargin = dp(6);
         status.addView(tvCond, lpC);
         LinearLayout.LayoutParams lpN = new LinearLayout.LayoutParams(-1, -2);
-        lpN.topMargin = dp(4);
+        lpN.topMargin = dp(2);
         status.addView(tvNow, lpN);
-        addTo(root, status, dp(8));
+        topRow.addView(status, new LinearLayout.LayoutParams(0, -2, 1.5f));
+
+        LinearLayout protect = card();
+        protect.setPadding(dp(12), dp(10), dp(12), dp(10));
+        protect.setOnClickListener(v -> startActivity(new Intent(this, ProtectActivity.class)));
+        TextView pTitle = new TextView(this);
+        pTitle.setText(I18n.t("增强防护", "Protection"));
+        pTitle.setTextSize(14);
+        pTitle.setTextColor(C_TEXT);
+        pTitle.getPaint().setFakeBoldText(true);
+        protect.addView(pTitle);
+        swProtect = new Switch(this);
+        swProtect.setText(I18n.t("总开关", "Master"));
+        swProtect.setTextSize(11);
+        swProtect.setTextColor(C_TEXT);
+        swProtect.setChecked(Prefs.protectEnabled(this));
+        swProtect.setOnCheckedChangeListener((btn, v) -> {
+            if (syncing) return;
+            Prefs.setProtectEnabled(this, v);
+            refreshProtectCard();
+            applyConfigQuietly();
+        });
+        LinearLayout.LayoutParams lpSw = new LinearLayout.LayoutParams(-1, -2);
+        lpSw.topMargin = dp(4);
+        protect.addView(swProtect, lpSw);
+        tvProtect = new TextView(this);
+        tvProtect.setTextSize(10);
+        tvProtect.setTextColor(C_SUB);
+        protect.addView(tvProtect, lpSw);
+        refreshProtectCard();
+        LinearLayout.LayoutParams lpP = new LinearLayout.LayoutParams(0, -2, 1f);
+        lpP.leftMargin = dp(8);
+        topRow.addView(protect, lpP);
+        addTo(root, topRow, dp(8));
 
         // 蓝牙设备
         LinearLayout devCard = card();
@@ -237,8 +311,8 @@ public class MainActivity extends Activity {
                     scheduleApply();
                     renderCondition();
                 });
-        swWifiUnlock = switchRow(condCard, I18n.t("WiFi 独立解锁", "Wi-Fi can unlock alone"),
-                I18n.t("已启用的 WiFi 在线即可解锁，不要求蓝牙设备在线",
+        swWifiUnlock = switchRow(condCard, I18n.t("WiFi 解锁", "Wi-Fi unlock"),
+                I18n.t("连着已启用的 WiFi 即可解锁，不要求蓝牙设备在线",
                         "Unlock while on an enabled network, without Bluetooth"),
                 Prefs.wifiUnlock(this), v -> {
                     if (syncing) return;
@@ -368,6 +442,30 @@ public class MainActivity extends Activity {
         // 高级
         LinearLayout advCard = card();
         advCard.addView(sectionTitle(I18n.t("高级", "Advanced")));
+        swExtend = switchRow(advCard, I18n.t("延长解锁（激进手段近似版，实验性）",
+                        "Extend unlock (aggressive workaround, experimental)"),
+                I18n.t("在身边时临时关闭锁屏密码，设备/WiFi 断开后立即写回；会清除生物识别，可能失败",
+                        "Temporarily clears the lock-screen PIN while nearby and writes it back as soon as "
+                                + "the device/Wi-Fi goes away. Invalidates biometrics and may fail"),
+                Prefs.extendUnlock(this), v -> {
+                    if (extendSyncing) return;
+                    onExtendToggle(v);
+                });
+        tvExtend = new TextView(this);
+        tvExtend.setTextSize(11);
+        tvExtend.setTextColor(C_SUB);
+        LinearLayout.LayoutParams lpExt = new LinearLayout.LayoutParams(-1, -2);
+        lpExt.topMargin = dp(6);
+        advCard.addView(tvExtend, lpExt);
+        btnExtendRestore = textButton(I18n.t("立即恢复锁屏密码", "Restore lock-screen PIN now"));
+        btnExtendRestore.setTextColor(C_DANGER);
+        btnExtendRestore.setVisibility(View.GONE);
+        btnExtendRestore.setOnClickListener(v -> {
+            extendActiveNow = false;
+            refreshExtendCard();
+            runAction(I18n.t("恢复锁屏密码", "Restore PIN"), () -> Scripts.extendRestore(this));
+        });
+        advCard.addView(btnExtendRestore);
         swHeld = switchRow(advCard, I18n.t("Shizuku 托管运行", "Run under Shizuku"),
                 I18n.t("守护挂在 Shizuku 进程上；关闭则用独立 nohup 进程",
                         "Daemon runs inside the Shizuku process; turn off to use a detached nohup process"),
@@ -446,9 +544,12 @@ public class MainActivity extends Activity {
         LinearLayout adbCard = card();
         adbCard.addView(sectionTitle(I18n.t("无线调试", "Wireless debugging")));
         adbCard.addView(hint(I18n.t("进入后可输入 adb 命令直接执行。使用前请先到「本应用 → 设置 → 无线调试」"
-                        + "完成配对与连接（既然已经内置了 adb 调试功能，那就要物尽其用，不加白不加）。",
+                        + "完成配对与连接。若谷歌收紧本机回环 ADB 导致配对失效，同一页底部提供"
+                        + "「网页版 ADB」入口：用 USB + 浏览器直接调试安卓设备，不需要回环端口。",
                 "Type and run adb commands inside. Complete pairing and connection in "
-                        + "Settings → Wireless debugging first. (ADB is already built in, so make the most of it.)")));
+                        + "Settings → Wireless debugging first. If Google restricts local loopback ADB and pairing "
+                        + "stops working, the same page offers “Web ADB”: debug an Android device directly over "
+                        + "USB in a browser, with no loopback port.")));
         Button adbOpen = primaryButton(I18n.t("无线 ADB 调试", "Wireless ADB debugging"), 0xFF374151);
         adbOpen.setOnClickListener(v -> {
             if (etRssi != null) Prefs.saveRssi(this, etRssi.getText().toString().trim());
@@ -575,6 +676,24 @@ public class MainActivity extends Activity {
         parent.addView(child, lp);
     }
 
+    /** 普通按钮（授权跳转等局部操作用） */
+    private Button button(String s) {
+        Button b = new Button(this);
+        b.setText(s);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setTextColor(Color.WHITE);
+        b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF374151));
+        hapticOnPress(b);
+        return b;
+    }
+
+    private LinearLayout.LayoutParams gap(int top) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(top);
+        return lp;
+    }
+
     private void addWeighted(LinearLayout row, View child) {
         int h = -2;
         if (child.getLayoutParams() != null && child.getLayoutParams().height > 0) {
@@ -594,6 +713,9 @@ public class MainActivity extends Activity {
 
     private static class Wifi {
         String ssid = "";
+        String bssid = "";
+        /** 0=开放网络，1=加密网络，?=未知（旧数据） */
+        String secure = "?";
         boolean enabled;
     }
 
@@ -628,6 +750,10 @@ public class MainActivity extends Activity {
             Wifi w = new Wifi();
             w.enabled = p.length > 0 && "1".equals(p[0].trim());
             if (p.length > 1) w.ssid = p[1].trim();
+            if (p.length > 2) w.bssid = p[2].trim().toUpperCase();
+            if (p.length > 3 && ("0".equals(p[3].trim()) || "1".equals(p[3].trim()))) {
+                w.secure = p[3].trim();
+            }
             if (!w.ssid.isEmpty()) list.add(w);
         }
         return list;
@@ -637,7 +763,8 @@ public class MainActivity extends Activity {
         StringBuilder sb = new StringBuilder();
         for (Wifi w : list) {
             if (sb.length() > 0) sb.append(';');
-            sb.append(w.enabled ? '1' : '0').append('|').append(w.ssid);
+            sb.append(w.enabled ? '1' : '0').append('|').append(w.ssid).append('|')
+                    .append(w.bssid).append('|').append(w.secure);
         }
         Prefs.saveWifiList(this, sb.toString());
     }
@@ -688,6 +815,12 @@ public class MainActivity extends Activity {
                     : I18n.t("需要「附近的设备」权限才能读取已配对设备。",
                     "The Nearby devices permission is required to read paired devices."));
             devBox.addView(empty);
+            if (!grantedBt) {
+                Button go = button(I18n.t("去设置授权「附近的设备」",
+                        "Open settings to allow Nearby devices"));
+                go.setOnClickListener(v -> openAppSettings());
+                devBox.addView(go, gap(8));
+            }
             saveTargets(all);
             return;
         }
@@ -705,13 +838,47 @@ public class MainActivity extends Activity {
             name.setTextSize(14);
             name.setTextColor(C_TEXT);
             TextView mac = new TextView(this);
-            boolean on = connected.contains(t.mac.toUpperCase()) || connected.contains(t.name)
-                    // HyperOS 的 dumpsys 只保留 MAC 末两段（XX:XX:XX:XX:EE:FF），用末 5 位兜底
-                    || (t.mac.length() >= 5 && connected.contains(t.mac.substring(t.mac.length() - 5).toUpperCase()));
-            String extra = on ? I18n.t("已连接", "Connected") : I18n.t("未连接", "Not connected");
+            boolean macHit = !t.mac.isEmpty() && (connected.contains(t.mac.toUpperCase())
+                    // HyperOS 的 dumpsys 只保留 MAC 末两段（XX:XX:XX:XX:4C:D8），用末 5 位兜底
+                    || (t.mac.length() >= 5
+                    && connected.contains(t.mac.substring(t.mac.length() - 5).toUpperCase())));
+            boolean nameHit = !t.name.isEmpty() && connected.contains(t.name);
+            boolean strict = Prefs.protectEnabled(this) && Prefs.macStrict(this);
+            boolean unreliable = false;
+            boolean on;
+            String extra;
+            if (strict && !t.mac.isEmpty()) {
+                // 有 MAC 就只认 MAC；同名只用于展示，不参与判定
+                if (macHit) {
+                    on = true;
+                    extra = I18n.t("已连接", "Connected");
+                } else if (nameHit && Prefs.macNameFallback(this)) {
+                    // 允许同名回退时，只有当前确实连着同名设备才放行，并标注身份不可靠
+                    on = true;
+                    unreliable = true;
+                    extra = I18n.t("MAC 不匹配 · 同名设备放行（身份不可靠）",
+                            "MAC mismatch · allowed by same name (identity unreliable)");
+                } else {
+                    on = false;
+                    unreliable = nameHit;
+                    extra = nameHit
+                            ? I18n.t("MAC 不匹配 · 判为不在线（身份不可靠）",
+                            "MAC mismatch · treated as offline (identity unreliable)")
+                            : I18n.t("未连接", "Not connected");
+                }
+            } else if (strict) {
+                // 确实拿不到 MAC 的旧条目才允许按名称匹配，并明确标注身份不可靠
+                on = nameHit;
+                unreliable = true;
+                extra = (on ? I18n.t("已连接", "Connected") : I18n.t("未连接", "Not connected"))
+                        + I18n.t(" · 身份不可靠（无 MAC）", " · identity unreliable (no MAC)");
+            } else {
+                on = macHit || nameHit;
+                extra = on ? I18n.t("已连接", "Connected") : I18n.t("未连接", "Not connected");
+            }
             mac.setText((t.mac.isEmpty() ? "" : t.mac + " · ") + extra);
             mac.setTextSize(11);
-            mac.setTextColor(on ? C_OK : C_SUB);
+            mac.setTextColor(unreliable ? 0xFFB45309 : (on ? C_OK : C_SUB));
             texts.addView(name);
             texts.addView(mac);
             r.addView(texts, new LinearLayout.LayoutParams(0, -2, 1));
@@ -745,11 +912,27 @@ public class MainActivity extends Activity {
         for (Wifi w : list) {
             LinearLayout r = row();
             r.setPadding(0, dp(6), 0, dp(6));
+            LinearLayout texts = new LinearLayout(this);
+            texts.setOrientation(LinearLayout.VERTICAL);
             TextView name = new TextView(this);
             name.setText(w.ssid);
             name.setTextSize(13);
             name.setTextColor(C_TEXT);
-            r.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+            TextView sub = new TextView(this);
+            boolean bind = Prefs.protectEnabled(this) && Prefs.wifiBindBssid(this);
+            String sec = I18n.t("加密", "Secure");
+            if ("0".equals(w.secure)) sec = I18n.t("开放网络", "Open network");
+            else if ("?".equals(w.secure)) sec = I18n.t("安全类型未知", "Security unknown");
+            String line = (w.bssid.isEmpty() ? I18n.t("未绑定 BSSID", "No BSSID bound") : w.bssid)
+                    + " · " + sec;
+            boolean unreliable = bind && w.bssid.isEmpty();
+            if (unreliable) line += I18n.t(" · 身份不可靠", " · identity unreliable");
+            sub.setText(line);
+            sub.setTextSize(10);
+            sub.setTextColor(unreliable ? 0xFFB45309 : C_SUB);
+            texts.addView(name);
+            texts.addView(sub);
+            r.addView(texts, new LinearLayout.LayoutParams(0, -2, 1));
             Button del = textButton(I18n.t("删除", "Delete"));
             del.setTextColor(C_DANGER);
             final Wifi fw = w;
@@ -777,35 +960,57 @@ public class MainActivity extends Activity {
     }
 
     private void addCurrentWifi() {
-        toast(I18n.t("正在读取当前 WiFi…", "Reading current Wi-Fi…"));
+        toast(I18n.t("正在读取当前 WiFi（SSID / BSSID / 安全类型）…",
+                "Reading current Wi-Fi (SSID / BSSID / security)…"));
         pool.execute(() -> {
-            final String ssid = Scripts.currentSsid();
+            final String[] info = Scripts.currentWifiInfo();
+            final String ssid = info[0];
+            final String bssid = info[1];
+            final String secure = info[2];
             ui.post(() -> {
                 if (ssid.isEmpty()) {
                     toast(I18n.t("当前没有连接 WiFi", "Not connected to Wi-Fi"));
                     return;
                 }
+                // 增强防护开启且要求绑定 BSSID 时，拒绝开放网络（除非在增强防护里明确允许）
+                if (Prefs.protectEnabled(this) && Prefs.wifiBindBssid(this)
+                        && "0".equals(secure) && !Prefs.wifiAllowOpen(this)) {
+                    toast(I18n.t("「%s」是开放网络，增强防护要求加密网络。\n"
+                                    + "如确实需要，可在「增强防护 → WiFi」里允许开放网络。",
+                            "\"%s\" is an open network; Protection requires a secured network.\n"
+                                    + "If you really need it, allow open networks in Protection → Wi-Fi.",
+                            ssid));
+                    return;
+                }
                 List<Wifi> list = parseWifi();
                 for (Wifi w : list) {
                     if (ssid.equals(w.ssid)) {
+                        // 旧数据只有 SSID：补存 BSSID 与安全类型
+                        if (bssid.isEmpty() || !bssid.equals(w.bssid)) w.bssid = bssid;
+                        if (!"?".equals(secure)) w.secure = secure;
                         w.enabled = true;
                         saveWifi(list);
                         scheduleApply();
                         renderCondition();
                         buildWifi();
-                        toast(I18n.t("已启用 %s", "Enabled %s", ssid));
+                        toast(I18n.t("已更新 %s（BSSID：%s）",
+                                "Updated %s (BSSID: %s)",
+                                ssid, bssid.isEmpty() ? "—" : bssid));
                         return;
                     }
                 }
                 Wifi w = new Wifi();
                 w.ssid = ssid;
+                w.bssid = bssid;
+                w.secure = secure;
                 w.enabled = true;
                 list.add(w);
                 saveWifi(list);
                 scheduleApply();
                 renderCondition();
                 buildWifi();
-                toast(I18n.t("已添加 %s", "Added %s", ssid));
+                toast(I18n.t("已添加 %s（BSSID：%s）", "Added %s (BSSID: %s)",
+                        ssid, bssid.isEmpty() ? "—" : bssid));
             });
         });
     }
@@ -825,6 +1030,9 @@ public class MainActivity extends Activity {
                 final Map<String, String> ck = Scripts.check();
                 final String runMode = Scripts.options().get("RUN_MODE");
                 final Map<String, String> cfg = Scripts.config();
+                final boolean ext = Scripts.extendedActive();
+                // Root 的就绪检测会拉起 su（首次可能弹窗），必须留在后台线程，不能放到 UI 线程
+                final String engineStatus = Privilege.statusText();
                 ui.post(new Runnable() {
                     @Override
                     public void run() {
@@ -848,12 +1056,14 @@ public class MainActivity extends Activity {
                             swHeld.setChecked("shizuku".equals(runMode));
                             swHeld.setOnCheckedChangeListener((b, v) -> scheduleApply());
                         }
-                        applyStatus(alive, ck, runMode);
+                        applyStatus(alive, ck, runMode, engineStatus);
                         buildDevices();
                         buildWifi();
                         syncWifiSwitches();
                         renderCondition();
                         refreshNowText();
+                        extendActiveNow = ext;
+                        refreshExtendCard();
                         busy.set(false);
                     }
                 });
@@ -861,7 +1071,217 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void applyStatus(boolean alive, Map<String, String> ck, String runMode) {
+    /** 增强防护卡片上的简短状态 */
+    private void refreshProtectCard() {
+        if (tvProtect == null) return;
+        if (!Prefs.protectEnabled(this)) {
+            tvProtect.setText(I18n.t("未开启 · 点此设置", "Off · tap to set up"));
+            return;
+        }
+        String mac = I18n.t("MAC 匹配：暂时停用（修复中）", "MAC match: disabled (fixing)");
+        String wifi = !Prefs.wifiBindBssid(this)
+                ? I18n.t("WiFi 宽松", "Wi-Fi loose")
+                : Prefs.wifiAllowOpen(this)
+                ? I18n.t("BSSID + 允许开放", "BSSID + open allowed")
+                : I18n.t("BSSID + 仅安全", "BSSID + secure only");
+        tvProtect.setText(mac + "\n" + wifi);
+    }
+
+    /** 延长解锁的状态说明与「立即恢复」按钮 */
+    private void refreshExtendCard() {
+        if (tvExtend == null) return;
+        if (extendActiveNow) {
+            tvExtend.setText(I18n.t("延长解锁中：锁屏密码已临时关闭。设备 / WiFi 断开后会先连续确认三次（约 1.5 秒），"
+                            + "确认离线才写回原密码；关闭开关、停止守护或一键清理会立即写回。",
+                    "Extend unlock active: the lock-screen PIN is temporarily cleared. When the device / Wi-Fi "
+                            + "leaves, presence is re-checked three times (about 1.5 s) and the PIN is written back "
+                            + "only if all three agree it is offline; turning the switch off, stopping the daemon "
+                            + "or clean-up restores it immediately."));
+            tvExtend.setTextColor(C_DANGER);
+        } else if (Prefs.extendUnlock(this)) {
+            tvExtend.setText(I18n.t("已开启（等待条件满足）：条件成立后临时关闭锁屏密码，条件失去时自动写回。",
+                    "Enabled (waiting): the PIN is cleared once the unlock conditions hold and restored "
+                            + "when they fail."));
+            tvExtend.setTextColor(C_SUB);
+        } else {
+            tvExtend.setText(I18n.t("实验性功能：用 locksettings clear 临时清除锁屏密码，指纹 / 人脸会失效；"
+                            + "部分 ROM 可能失败。开启前请确认记得原 PIN，并保留自行重设锁屏的手段。",
+                    "Experimental: uses locksettings clear to temporarily remove the lock-screen PIN and "
+                            + "invalidates fingerprints / face unlock. Some ROMs reject it. Make sure you remember "
+                            + "the original PIN and can reset the lock screen yourself."));
+            tvExtend.setTextColor(C_SUB);
+        }
+        if (btnExtendRestore != null) {
+            btnExtendRestore.setVisibility(extendActiveNow ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private void resetExtendSwitch() {
+        if (swExtend == null) return;
+        extendSyncing = true;
+        swExtend.setChecked(false);
+        extendSyncing = false;
+    }
+
+    private void onExtendToggle(boolean on) {
+        if (!on) {
+            Prefs.setExtendUnlock(this, false);
+            applyConfigQuietly();
+            extendActiveNow = false;
+            refreshExtendCard();
+            runAction(I18n.t("关闭延长解锁", "Disable extend unlock"), () -> {
+                Scripts.Report r = new Scripts.Report();
+                r.ok = true;
+                r.text = I18n.t("功能已关闭，未处于临时关闭密码状态",
+                        "Disabled; the PIN was not being cleared");
+                if (Scripts.extendedActive()) return Scripts.extendRestore(this);
+                return r;
+            });
+            return;
+        }
+        String pin = etPin.getText().toString().trim();
+        if (!Scripts.validPin(pin)) {
+            toast(I18n.t("请先填写正确的锁屏 PIN（4~16 位数字）",
+                    "Enter the correct lock-screen PIN (4–16 digits) first"));
+            resetExtendSwitch();
+            return;
+        }
+        Prefs.savePin(this, pin);
+        toast(I18n.t("正在校验锁屏 PIN…", "Verifying the lock-screen PIN…"));
+        pool.execute(new Runnable() {
+            @Override
+            public void run() {
+                final boolean ok = Scripts.verifyLockPin(pin);
+                ui.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || isDestroyed()) return;
+                        if (!ok) {
+                            toast(I18n.t("PIN 与系统锁屏密码不一致，或授权服务不可用，已取消",
+                                    "The PIN does not match the system lock screen, or privilege is unavailable. "
+                                            + "Cancelled."));
+                            resetExtendSwitch();
+                        } else {
+                            stagedExtendConfirm(1);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    /** 三级确认（5 秒 → 2 秒 → 2 秒），全部通过后才真正写入配置 */
+    private void stagedExtendConfirm(final int stage) {
+        if (isFinishing() || isDestroyed()) {
+            resetExtendSwitch();
+            return;
+        }
+        String title;
+        String msg;
+        int wait;
+        if (stage == 1) {
+            title = I18n.t("第 1/3 步：确认风险", "Step 1/3: accept the risk");
+            msg = I18n.t("开启后，只要受信任设备或 WiFi 在线，锁屏密码会被系统级清除（locksettings clear）。"
+                    + "这段时间里，任何拿到手机的人都可以直接进入系统。\n\n这是一项实验性功能，部分机型会失败。",
+                    "While a trusted device or Wi-Fi is online, the lock-screen PIN is removed at the system "
+                            + "level (locksettings clear). Anyone holding the phone can get in during that time."
+                            + "\n\nThis is experimental and fails on some devices.");
+            wait = 5;
+        } else if (stage == 2) {
+            title = I18n.t("第 2/3 步：生物识别会失效", "Step 2/3: biometrics will break");
+            msg = I18n.t("密码被清除期间，系统录入的指纹 / 人脸会被判定失效，恢复后需要重新录入。"
+                    + "同时部分应用（支付、银行、加密文件夹）可能要求重新验证身份。",
+                    "While the PIN is removed, enrolled fingerprints / face data are invalidated and must be "
+                            + "re-enrolled afterwards. Some apps (payments, banking, encrypted folders) may ask "
+                            + "you to verify your identity again.");
+            wait = 2;
+        } else if (stage == 3) {
+            title = I18n.t("第 3/3 步：恢复并不保证", "Step 3/3: restore is not guaranteed");
+            msg = I18n.t("会写回原 PIN：设备 / WiFi 断开后先连续确认三次离线（约 1.5 秒）才恢复；"
+                    + "关闭本开关、停止守护、一键清理会立即恢复。\n"
+                    + "但守护被系统杀死、授权失效、重启后守护未运行等异常情况下，密码可能不会自动恢复。"
+                    + "\n\n请确认你记得原 PIN，并能自行在系统设置里重新设置锁屏密码。",
+                    "The original PIN is written back after three consecutive offline checks (about 1.5 s) when "
+                            + "the device / Wi-Fi leaves; turning this switch off, stopping the daemon or clean-up "
+                            + "restores it immediately.\nBut if the daemon is killed, privilege fails, or the "
+                            + "daemon is not running after a reboot, the PIN may not be restored.\n\nMake sure you "
+                            + "remember the original PIN and can reset the lock screen yourself.");
+            wait = 2;
+        } else {
+            Prefs.setExtendUnlock(this, true);
+            extendSyncing = true;
+            if (swExtend != null) swExtend.setChecked(true);
+            extendSyncing = false;
+            applyConfigQuietly();
+            refreshExtendCard();
+            toast(I18n.t("已开启延长解锁：下次满足条件时会临时关闭锁屏密码",
+                    "Extend unlock enabled: the PIN will be cleared next time the conditions hold"));
+            refresh();
+            return;
+        }
+        countdownConfirm(title, msg, wait,
+                I18n.t("取消", "Cancel"), I18n.t("我已知悉", "I understand"),
+                () -> stagedExtendConfirm(stage + 1), this::resetExtendSwitch);
+    }
+
+    /** 强制等待的确认框：按钮在 seconds 秒内不可点，避免连点一路跳过 */
+    private void countdownConfirm(String title, String msg, int seconds,
+                                  String cancelText, String okText,
+                                  final Runnable onConfirm, final Runnable onCancel) {
+        final boolean[] confirmed = {false};
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(msg)
+                .setNegativeButton(cancelText, (d, w) -> {
+                    confirmed[0] = true;
+                    onCancel.run();
+                })
+                .setPositiveButton(okText, null)
+                .create();
+        dlg.setOnShowListener(d -> {
+            final Button pos = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (pos == null) return;
+            pos.setEnabled(false);
+            final int[] left = {seconds};
+            pos.setText(I18n.t("请等待 %d 秒", "Wait %d s", left[0]));
+            final Runnable tick = new Runnable() {
+                @Override
+                public void run() {
+                    left[0]--;
+                    if (left[0] <= 0) {
+                        pos.setEnabled(true);
+                        pos.setText(okText);
+                    } else {
+                        pos.setText(I18n.t("请等待 %d 秒", "Wait %d s", left[0]));
+                        ui.postDelayed(this, 1000);
+                    }
+                }
+            };
+            ui.postDelayed(tick, 1000);
+            pos.setOnClickListener(v -> {
+                confirmed[0] = true;
+                dlg.dismiss();
+                onConfirm.run();
+            });
+        });
+        // 点外部或返回键取消时也要回滚开关
+        dlg.setOnDismissListener(d -> {
+            if (!confirmed[0]) onCancel.run();
+        });
+        dlg.show();
+    }
+
+    /** 只重写配置，不阻塞 UI；用于增强防护开关 */
+    private void applyConfigQuietly() {
+        new Thread(() -> {
+            try {
+                Scripts.applyConfig(this);
+            } catch (Throwable ignored) {
+            }
+        }, "apply-config").start();
+    }
+
+    private void applyStatus(boolean alive, Map<String, String> ck, String runMode, String engineStatus) {
         tvDot.setTextColor(alive ? C_OK : C_SUB);
         tvDaemon.setText(alive ? I18n.t("守护运行中", "Daemon running") : I18n.t("守护未运行", "Daemon stopped"));
         String mode = "shizuku".equals(runMode) ? I18n.t("托管", "Managed") : I18n.t("独立进程", "Detached process");
@@ -869,7 +1289,7 @@ public class MainActivity extends Activity {
         if (err != null && (err.contains("No such file") || err.contains("not found"))) {
             err = I18n.t("尚未部署（点下面的「部署并启用」）", "Not deployed yet (tap Deploy and enable below)");
         }
-        tvShizuku.setText(Privilege.modeLabel() + " · " + Privilege.statusText()
+        tvShizuku.setText(Privilege.modeLabel() + " · " + engineStatus
                 + " · " + mode + (err != null ? " · " + err : ""));
         String status = ck.get("status");
         if (status != null && !"normal".equals(status)) {
@@ -973,6 +1393,11 @@ public class MainActivity extends Activity {
         }
         String cd = ck.get("cooldowns");
         if (cd != null && !"0".equals(cd)) sb.append(I18n.t(" · 冷却计数 ", " · Cooldowns ")).append(cd);
+        String ident = ck.get("identity");
+        if (ident != null && !ident.isEmpty()) {
+            sb.append(I18n.t(" · 身份不可靠（按名称匹配）",
+                    " · identity unreliable (matched by name)"));
+        }
         if (ck.isEmpty()) sb.append(I18n.t("未读到状态（守护可能未部署）",
                 "No status available (daemon may not be deployed)"));
         tvNow.setText(sb.toString());
@@ -1038,17 +1463,22 @@ public class MainActivity extends Activity {
     private void confirmClean() {
         new AlertDialog.Builder(this)
                 .setTitle(I18n.t("一键清理所有残留", "Clean up all leftovers"))
-                .setMessage(I18n.t("将停止守护与前台服务，结束所有旧版守护/logcat 监听进程，"
-                                + "并删除 /sdcard/watch-unlock 与 /data/local/tmp/wu.*。\n\n"
+                .setMessage(I18n.t("将停止守护与所有前台服务（含状态监控、无线调试配对的 mDNS 发现），"
+                                + "结束所有旧版守护/logcat 监听进程，并删除 /data/local/tmp/watch-unlock、"
+                                + "旧版 /sdcard/watch-unlock 与 /data/local/tmp/wu.*（含未来新增的运行时文件）。\n\n"
+                                + "若此刻处于「延长解锁」，会先写回锁屏密码再删除。\n\n"
                                 + "设备与 WiFi 的选择会保留，清理后可重新部署。",
-                        "This stops the daemon and the foreground service, ends all old daemon/logcat "
-                                + "watching processes, and deletes /sdcard/watch-unlock and /data/local/tmp/wu.*."
+                        "This stops the daemon and every foreground service (status monitoring and the "
+                                + "wireless-debugging pairing/mDNS discovery), ends all old daemon/logcat "
+                                + "watching processes, and deletes /data/local/tmp/watch-unlock, the old "
+                                + "/sdcard/watch-unlock and all /data/local/tmp/wu.* runtime files."
+                                + "\n\nIf extend unlock is active, the lock-screen PIN is written back first."
                                 + "\n\nYour device and WiFi selections are kept; you can deploy again afterwards."))
                 .setNegativeButton(I18n.t("取消", "Cancel"), null)
                 .setPositiveButton(I18n.t("清理", "Clean up"), (d, w) -> {
                     Prefs.setWantRunning(this, false);
                     stopService(new Intent(this, MonitorService.class));
-                    runAction(I18n.t("清理", "Clean up"), () -> Scripts.cleanAll());
+                    runAction(I18n.t("清理", "Clean up"), () -> Scripts.cleanAll(this));
                 })
                 .show();
     }
@@ -1095,19 +1525,37 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- 权限/服务
 
+    private boolean permRequested = false;
+    private boolean deniedDialogShown = false;
+
+    /**
+     * 主动请求权限：
+     * Android 12+ 的「附近的设备」需要 CONNECT + SCAN；Android 13+ 还要通知。
+     * 用户勾选「不再询问」后系统不会再弹框，此时必须引导到应用设置页手动打开。
+     */
     private void ensurePermissions() {
         List<String> req = new ArrayList<>();
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             req.add(Manifest.permission.POST_NOTIFICATIONS);
         }
-        if (Build.VERSION.SDK_INT >= 31
-                && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            req.add(Manifest.permission.BLUETOOTH_CONNECT);
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                req.add(Manifest.permission.BLUETOOTH_CONNECT);
+            }
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                req.add(Manifest.permission.BLUETOOTH_SCAN);
+            }
         }
         grantedBt = Build.VERSION.SDK_INT < 31
                 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
-        if (!req.isEmpty()) requestPermissions(req.toArray(new String[0]), REQ_PERMS);
+        if (!req.isEmpty()) {
+            permRequested = true;
+            requestPermissions(req.toArray(new String[0]), REQ_PERMS);
+        } else if (!grantedBt && !deniedDialogShown) {
+            // 没权限可请求，说明上次已经选了「不再询问」
+            showPermissionDeniedDialog();
+        }
     }
 
     @Override
@@ -1116,8 +1564,42 @@ public class MainActivity extends Activity {
         if (code == REQ_PERMS) {
             grantedBt = Build.VERSION.SDK_INT < 31
                     || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+            if (!grantedBt && Build.VERSION.SDK_INT >= 31
+                    && !shouldShowRequestPermissionRationale(Manifest.permission.BLUETOOTH_CONNECT)) {
+                // 请求后仍不弹理由 = 已被永久拒绝（或系统策略禁止）
+                showPermissionDeniedDialog();
+            }
             startMonitor();
             refresh();
+            buildDevices();
+        }
+    }
+
+    /** 权限被永久拒绝时，给出明确跳转，而不是无声地显示空列表 */
+    private void showPermissionDeniedDialog() {
+        deniedDialogShown = true;
+        new AlertDialog.Builder(this)
+                .setTitle(I18n.t("需要「附近的设备」权限", "Nearby devices permission required"))
+                .setMessage(I18n.t(
+                        "系统没有授予蓝牙权限，已配对设备无法读取，也不会自动解锁。\n\n"
+                                + "如果系统不再弹出授权框，请到应用设置 → 权限 → 附近的设备，"
+                                + "选择「允许」；部分 ROM 还需要单独允许「应用列表 / 自启动」。",
+                        "Bluetooth permission is missing, so paired devices cannot be read and unlocking "
+                                + "will not work. If the system no longer shows a prompt, open App info → "
+                                + "Permissions → Nearby devices and allow it. Some ROMs also require the "
+                                + "app-list / auto-start switches."))
+                .setPositiveButton(I18n.t("去设置授权", "Open app settings"), (d, w) -> openAppSettings())
+                .setNegativeButton(I18n.t("稍后", "Later"), null)
+                .show();
+    }
+
+    private void openAppSettings() {
+        try {
+            Intent i = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            i.setData(android.net.Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+        } catch (Throwable t) {
+            toast(I18n.t("无法打开应用设置", "Cannot open app settings"));
         }
     }
 

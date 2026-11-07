@@ -41,11 +41,14 @@ public class MonitorService extends Service {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private ExecutorService bg;
+    /** 解锁与状态查询分队列：守护重启要 sleep 2 秒，不能把亮屏解锁排到它后面 */
+    private ExecutorService unlockBg;
     private String lastAlertKey = "";
     private BroadcastReceiver screenReceiver;
     private BroadcastReceiver btReceiver;
     private BroadcastReceiver wifiReceiver;
     private long lastIdleMs = 0L;
+    private static boolean legacyChecked = false;
 
     private final Shizuku.OnBinderDeadListener deadListener = new Shizuku.OnBinderDeadListener() {
         @Override
@@ -77,10 +80,14 @@ public class MonitorService extends Service {
 
     private void wakeOnce() {
         if (!Prefs.wantRunning(this)) return;
-        run(new Runnable() {
+        if (unlockBg == null || unlockBg.isShutdown()) return;
+        unlockBg.execute(new Runnable() {
             @Override
             public void run() {
-                Scripts.wakeUnlock();
+                try {
+                    Scripts.wakeUnlock();
+                } catch (Throwable ignored) {
+                }
             }
         });
     }
@@ -118,7 +125,12 @@ public class MonitorService extends Service {
         run(new Runnable() {
             @Override
             public void run() {
-                if (!Scripts.daemonAlive()) Scripts.start();
+                if (!Scripts.daemonAlive()) {
+                    Scripts.Report r = Scripts.start();
+                    // 守护刚启动时没有在线缓存：用当前真实的监听状态补一次，
+                    // 否则 wu.present 会一直停在 track=0，每次亮屏都现场查（+200~350ms）
+                    if (r.ok) refreshPresence(btReceiver != null);
+                }
             }
         });
     }
@@ -129,6 +141,7 @@ public class MonitorService extends Service {
         I18n.init(this);
         Privilege.init(this);
         bg = Executors.newSingleThreadExecutor();
+        unlockBg = Executors.newSingleThreadExecutor();
         createChannels();
         startForeground(ID_STATUS, buildStatus(I18n.t("蓝牙设备解锁", "Bluetooth Device Unlock"),
                 I18n.t("正在检查…", "Checking…")));
@@ -137,6 +150,16 @@ public class MonitorService extends Service {
         } catch (Throwable ignored) {
         }
         ensureTracking();
+        // 升级迁移：清掉旧版 /sdcard/watch-unlock 里的明文 PIN（必要时自动重新部署）
+        if (!legacyChecked) {
+            legacyChecked = true;
+            bg.execute(new Runnable() {
+                @Override
+                public void run() {
+                    Scripts.migrateLegacy(MonitorService.this);
+                }
+            });
+        }
         handler.post(statusRunnable);
         handler.postDelayed(watchdog, WATCHDOG_MS);
     }
@@ -162,6 +185,7 @@ public class MonitorService extends Service {
         } catch (Throwable ignored) {
         }
         if (bg != null) bg.shutdownNow();
+        if (unlockBg != null) unlockBg.shutdownNow();
         super.onDestroy();
     }
 
@@ -360,6 +384,8 @@ public class MonitorService extends Service {
         if (Prefs.wantRunning(this) && !"disabled".equals(status) && !Scripts.daemonAlive()) {
             Scripts.Report rep = Scripts.start();
             if (rep.ok) {
+                // 拉起后补一次在线缓存，避免下一次亮屏退化成本次现查
+                refreshPresence(btReceiver != null);
                 notifyStatus(I18n.t("蓝牙设备解锁", "Bluetooth Device Unlock"),
                         I18n.t("守护已自动重启（%s）", "Daemon restarted automatically (%s)", clock));
             }

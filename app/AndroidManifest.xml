@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.watchunlock.app"
-    android:versionCode="333"
-    android:versionName="3.3.3">
+    android:versionCode="637"
+    android:versionName="6.3.7">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
 
     <!-- Shizuku：以 shell 身份执行解锁脚本 -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 应用选择器需要读出全部已安装应用（含系统应用）。本应用为侧载工具，
+         仅在本地枚举列表，不上传、不联网。Google Play 上架才需要额外申请。 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!-- 内置无线调试：手机自己作为 ADB 客户端连本机端口 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -16,6 +19,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 监听蓝牙连接/断开广播（Android 12+ 需要运行时授权「附近的设备」） -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- 部分 ROM 的「附近的设备」权限组需要 SCAN 才允许完整读取/刷新蓝牙设备 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission
         android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
@@ -62,6 +67,21 @@
             android:name=".AnnounceActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".ProtectActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".PairCodeActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+
+        <activity
+            android:name=".AppPickerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
         <service
             android:name=".MonitorService"
             android:exported="false"
@@ -69,6 +89,16 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="watch unlock status monitor" />
+        </service>
+
+        <!-- 无线调试配对：前台服务 + 通知内直接输入配对码 -->
+        <service
+            android:name=".AdbPairingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="adb wireless debugging pairing" />
         </service>
 
         <receiver
