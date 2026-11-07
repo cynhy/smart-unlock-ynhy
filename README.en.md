@@ -29,12 +29,13 @@ Smart Unlock treats “a paired Bluetooth device is online” as an unlock condi
 
 > **Important: every build before 6.4.0 (including 6.3.9) has a known wireless-debugging bug — the pairing service may not be found, the connect port may be missing after pairing, or the notification send button may not respond.** Use 6.4.0 or later (6.4.3 recommended).
 
-What changed:
+Note: the core wireless-debugging fixes shipped in **6.4.0**; 6.4.3 keeps them and adds the split-screen hint.
 
-- Rewritten mDNS discovery: resolve queue, resolve retries and discovery restart retries;
+- Rewritten mDNS discovery (6.4.0): resolve queue, resolve retries and discovery restart retries;
 - The connect port is discovered in parallel and cached; after pairing the app tries the cached/last port and keeps waiting up to 25 seconds for a new port instead of failing immediately;
 - The notification is no longer rebuilt on every state callback, so the inline input is not collapsed and the send button does not need repeated taps;
-- New “Big input” action opens a full-size input page with a large “Send” button (single tap); it recommends split screen or a floating window so the system pairing-code card does not collapse;
+- New “Big input” action (6.4.0) opens a full-size input page with a large “Send” button (single tap);
+- **New in 6.4.3**: the input page recommends split screen or a floating window, because the system pairing-code card may collapse and the code becomes invalid;
 - Web ADB now documents the two-phone flow and provides 9 copyable command cards.
 
 ### Wireless-debugging engine (official ADB since 6.3.7, kept in 6.4.3)
