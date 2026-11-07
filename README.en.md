@@ -5,8 +5,6 @@ Use a paired Bluetooth device (watch / earbuds / band) as a key: while it is onl
 
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-2ea44f)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84)]()
-[![Stable](https://img.shields.io/badge/stable-1.1%20%7C%203.3.3%20%7C%206.3.6-1f6feb)]()
-[![Latest](https://img.shields.io/badge/latest-6.4.3%20beta-f59e0b)]()
 
 [简体中文](README.md) | English
 
@@ -15,9 +13,9 @@ Use a paired Bluetooth device (watch / earbuds / band) as a key: while it is onl
 ---
 
 > [!IMPORTANT]
-> **Only 1.1, 3.3.3 and 6.3.6 are marked stable.** Other signed builds are kept as historical / test releases and are not promised the same stability.
+> **Use 6.4.3.** Other versions may have functional defects or security vulnerabilities; they are kept for history only — use them with caution.
 >
-> **Wireless debugging: every build before 6.4.0 (including 6.3.9) has a known bug and may fail to pair or connect.** Use **6.4.0 or later** (the current beta is **6.4.3**) if you need wireless debugging; 6.4.0 fixes pairing-service discovery, connect-port discovery and the notification send button. **6.3.9 is a beta** (versionCode 639) but its wireless debugging is unreliable — do not rely on it.
+> **Wireless debugging: every build before 6.4.0 (including 6.3.9) has a known bug and may fail to pair or connect.** Use **6.4.0 or later** (the current recommendation is **6.4.3**) if you need wireless debugging; 6.4.0 fixes pairing-service discovery, connect-port discovery and the notification send button. **6.3.9 is a historical build** (versionCode 639) whose wireless debugging is unreliable — do not rely on it.
 >
 > **Unsigned APKs are never uploaded to any Release.** The repository holds source code and documentation only; Releases contain signed builds only.
 
@@ -30,7 +28,7 @@ Not suitable for:
 - Pattern or mixed-password lock screens (only a 4–16 digit numeric PIN is supported);
 - Users with very high security requirements who cannot accept shell-level access;
 
-## 6.4.3 update (beta)
+## 6.4.3 update (recommended)
 
 > **Important: every build before 6.4.0 (including 6.3.9) has a known wireless-debugging bug — the pairing service may not be found, the connect port may be missing after pairing, or the notification send button may not respond.** Use 6.4.0 or later (6.4.3 recommended).
 
@@ -90,19 +88,19 @@ The three are mutually exclusive; after switching, tap “Deploy & enable” aga
 
 ## Download
 
-### Stable (only these three are recommended)
+### Recommended build (6.4.3)
 
 | Version | Download | Notes |
 | --- | --- | --- |
-| **1.1** | [watch-unlock-1.1.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v1.1/watch-unlock-1.1.apk) | Early stable; same official signature as 3.3 and later |
-| **3.3.3** | [watch-unlock-3.3.3-official.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.3.3/watch-unlock-3.3.3-official.apk) | Stable baseline |
-| **6.3.6** | [watch-unlock-6.3.6-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.3.6/watch-unlock-6.3.6-signed.apk) | **Current recommended stable**, fixes MAC parsing and pairing notifications |
+| **6.4.3** | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | **Currently recommended**: wireless-debugging fixes (pairing discovery / connect port / big send button) + Root stability fixes + Web ADB two-phone flow |
 
-### 6.4.3 beta
+### Other signed builds (historical, may have functional defects or security vulnerabilities)
 
 | Version | Download | Notes |
 | --- | --- | --- |
-| 6.4.3 | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | **Wireless-debugging fixes** (pairing discovery / connect port / big send button) + Root stability + Web ADB two-phone flow; beta, no stability promise |
+| 1.1 | [watch-unlock-1.1.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v1.1/watch-unlock-1.1.apk) | Early build; same official signature as 3.3 and later — use with caution |
+| 3.3.3 | [watch-unlock-3.3.3-official.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.3.3/watch-unlock-3.3.3-official.apk) | Baseline build — use with caution |
+| 6.3.6 | [watch-unlock-6.3.6-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.3.6/watch-unlock-6.3.6-signed.apk) | Fixed MAC parsing and pairing notifications — use with caution |
 
 ### All signed builds (historical / test)
 
@@ -116,13 +114,13 @@ The three are mutually exclusive; after switching, tap “Deploy & enable” aga
 | 3.8.8 | [watch-unlock-3.8.8-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.8.8/watch-unlock-3.8.8-signed.apk) | Official | Historical |
 | 3.9 | [watch-unlock-3.9-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.9/watch-unlock-3.9-signed.apk) | Official | Historical |
 | 6.3.3 | [watch-unlock-6.3.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.3.3/watch-unlock-6.3.3-signed.apk) | Official | Historical |
-| 3.3.3 / 6.3.6 / 1.1 | See Stable above | Official | Stable |
+| 1.1 / 3.3.3 / 6.3.6 | See historical versions above | Official | Historical |
 
 > **Signing**: except for 3.0-test (separate test key), 1.1 and every signed build from 3.3 onward share the same official certificate (SHA-256 `18c39f81f5ba24f82d9553ce469b45c1b44d5c93aef21c71c634a2659d681008`) and can overwrite each other (Android still blocks version-code downgrades). 3.0-test and official builds **cannot** overwrite each other — uninstall first (in-app settings will be lost).
 
 ## Quick start
 
-1. **Install**: prefer 6.3.6 (stable); use 6.4.3 if you need wireless debugging, the Root fixes or Web ADB.
+1. **Install**: use 6.4.3; other versions may have functional defects or security vulnerabilities.
 2. **Authorize**: Settings → Authorization method → Shizuku (recommended) / Root / Wireless debugging, and follow the on-screen steps.
 3. **Pair the device**: pair the watch / earbuds in system Bluetooth first, then tap “Rescan” in the app and tick it.
 4. **Enter the PIN**: use the same 4–16 digit PIN as the system lock screen.

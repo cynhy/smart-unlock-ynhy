@@ -1,4 +1,4 @@
-# Smart Unlock 1.1 · 亮屏自动解锁（稳定版）
+# Smart Unlock 1.1 · 亮屏自动解锁（历史版本）
 
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](../../LICENSE)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-brightgreen)

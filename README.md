@@ -7,8 +7,6 @@
 
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-2ea44f)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84)]()
-[![Stable](https://img.shields.io/badge/stable-1.1%20%7C%203.3.3%20%7C%206.3.6-1f6feb)]()
-[![Latest](https://img.shields.io/badge/latest-6.4.3%20beta-f59e0b)]()
 
 [下载](#下载) · [快速开始](#快速开始) · [网页版 ADB](#网页版-adb免回环端口) · [使用手册](docs/使用说明.md) · [常见问题](#常见问题)
 
@@ -17,11 +15,11 @@
 ---
 
 > [!IMPORTANT]
-> **稳定版只有 1.1、3.3.3、6.3.6。** 其余已签名版本都会保留，但只作为历史 / 测试版提供，不承诺同等稳定性。
+> **推荐使用 6.4.3。** 其余版本可能存在功能缺陷或安全性漏洞，仅作历史留存，请谨慎使用。
 >
-> **无线调试：6.4.0 之前的所有版本都存在已知 bug，可能无法完成配对或连接。** 需要无线调试请使用 **6.4.0 及以后**（当前测试版为 **6.4.3**）；6.4.0 起修复了配对服务发现、连接端口发现和通知输码按钮的问题。**6.3.9 是测试版**（versionCode 639），但无线调试不可靠，请勿用于实际使用。
+> **无线调试：6.4.0 之前的所有版本都存在已知 bug，可能无法完成配对或连接。** 需要无线调试请使用 **6.4.0 及以后**（当前推荐 **6.4.3**）；6.4.0 起修复了配对服务发现、连接端口发现和通知输码按钮的问题。**6.3.9 是历史版本**（versionCode 639），无线调试不可靠，请勿用于实际使用。
 >
->仓库只收录源码与文档；Release 中只放了签名包。
+> 仓库只收录源码与文档；Release 中只放了签名包。
 
 ## 这个项目是什么
 
@@ -32,7 +30,7 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 - 图案 / 混合密码锁屏（只支持 4～16 位纯数字 PIN）；
 - 对安全性要求极高、不能接受 shell 权限的用户；
 
-## 6.4.3 更新（测试版）
+## 6.4.3 更新（推荐）
 
 > **重要：6.4.0 之前的所有版本（含 6.3.9），无线调试都有已知 bug，可能搜不到配对服务、配对成功后找不到连接端口，或通知里点发送没反应。** 请使用 6.4.0 及以后（推荐 6.4.3）。
 
@@ -93,19 +91,19 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 
 ## 下载
 
-### 稳定版（只推荐这三个）
+### 推荐版本（6.4.3）
 
 | 版本 | 下载 | 说明 |
 | --- | --- | --- |
-| **1.1** | [watch-unlock-1.1.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v1.1/watch-unlock-1.1.apk) | 早期稳定版；与 3.3 及之后使用同一正式签名 |
-| **3.3.3** | [watch-unlock-3.3.3-official.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.3.3/watch-unlock-3.3.3-official.apk) | 基础功能稳定版 |
-| **6.3.6** | [watch-unlock-6.3.6-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.3.6/watch-unlock-6.3.6-signed.apk) | **当前推荐稳定版**，修复 MAC 解析与配对通知问题 |
+| **6.4.3** | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | **目前推荐**：修复无线调试（配对发现 / 连接端口 / 大按钮发送）+ Root 稳定性修复 + 网页版 ADB 两台手机流程 |
 
-### 6.4.3 测试版
+### 其他已签名版本（历史，可能存在功能缺陷或安全性漏洞）
 
 | 版本 | 下载 | 说明 |
 | --- | --- | --- |
-| 6.4.3 | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | **修复无线调试**（配对发现 / 连接端口 / 大按钮发送）+ Root 稳定性修复 + 网页版 ADB 两台手机流程；测试版，不承诺稳定 |
+| 1.1 | [watch-unlock-1.1.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v1.1/watch-unlock-1.1.apk) | 早期版本；与 3.3 及之后使用同一正式签名，请谨慎使用 |
+| 3.3.3 | [watch-unlock-3.3.3-official.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.3.3/watch-unlock-3.3.3-official.apk) | 基础功能版本，请谨慎使用 |
+| 6.3.6 | [watch-unlock-6.3.6-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.3.6/watch-unlock-6.3.6-signed.apk) | 修复 MAC 解析与配对通知问题，请谨慎使用 |
 
 ### 全部已签名版本（历史 / 测试）
 
@@ -119,13 +117,13 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 | 3.8.8 | [watch-unlock-3.8.8-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.8.8/watch-unlock-3.8.8-signed.apk) | 正式 | 历史 |
 | 3.9 | [watch-unlock-3.9-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.9/watch-unlock-3.9-signed.apk) | 正式 | 历史 |
 | 6.3.3 | [watch-unlock-6.3.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.3.3/watch-unlock-6.3.3-signed.apk) | 正式 | 历史 |
-| 3.3.3 / 6.3.6 / 1.1 | 见上方稳定版 | 正式 | 稳定 |
+| 1.1 / 3.3.3 / 6.3.6 | 见上方历史版本 | 正式 | 历史 |
 
 > **签名说明**：除 3.0-test 使用独立测试密钥外，1.1 与 3.3 及之后的全部已签名版本均使用同一正式证书（SHA-256 `18c39f81f5ba24f82d9553ce469b45c1b44d5c93aef21c71c634a2659d681008`），可以互相覆盖升级（系统仍会阻止版本号降级）。3.0-test 与正式包**不能互相覆盖**，切换前必须先卸载（应用内设置会丢失）。
 
 ## 快速开始
 
-1. **安装**：优先选 6.3.6 稳定版；需要无线调试、Root 修复或网页版 ADB 请装 6.4.3。
+1. **安装**：装 6.4.3；其余版本可能存在功能缺陷或安全性漏洞。
 2. **授权**：设置 → 授权方式 → Shizuku（推荐）/ Root / 无线调试，按页面提示完成授权。
 3. **配对设备**：先让手表 / 耳机在系统蓝牙里配对，回到应用点「重新扫描」，勾选设备。
 4. **填 PIN**：输入与系统锁屏一致的 4～16 位数字。
