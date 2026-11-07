@@ -63,13 +63,21 @@ public class PairCodeActivity extends Activity {
         TextView hint = new TextView(this);
         hint.setText(I18n.t(
                 "请在系统「无线调试 → 使用配对码配对设备」弹窗中查看 6 位数字。"
-                        + "保持那个弹窗打开，输入后点「发送」。配对成功后会自动连接，不需要再回到无线调试页面。",
+                        + "保持那个弹窗打开，输入后点一次下面的「发送」即可。配对成功后会自动连接，不需要再回到无线调试页面。\n"
+                        + "推荐使用分屏或小窗打开本页：离开系统设备码页面后，设备码卡片可能会收起，配对码会立即失效。",
                 "Look at the 6-digit number in the system “Pair device with pairing code” dialog. "
-                        + "Keep it open, enter the code and tap Send. The app connects automatically after pairing."));
+                        + "Keep it open, enter the code and tap Send once. The app connects automatically after pairing.\n"
+                        + "Split screen or a floating window is recommended: if you leave the system pairing-code page, "
+                        + "the code card may collapse and the code becomes invalid."));
         hint.setTextSize(12);
         hint.setTextColor(0xFF6B7280);
         hint.setPadding(0, dp(8), 0, dp(10));
         root.addView(hint);
+
+        int portExtra = getIntent().getIntExtra(AdbPairingService.EXTRA_PORT, -1);
+        if (portExtra > 0) {
+            Prefs.setAdbPairPort(this, portExtra);
+        }
 
         code = new EditText(this);
         code.setHint(I18n.t("6 位配对码", "6-digit code"));
@@ -85,10 +93,11 @@ public class PairCodeActivity extends Activity {
         root.addView(code, new LinearLayout.LayoutParams(-1, -2));
 
         Button send = new Button(this);
-        send.setText(I18n.t("发送配对码", "Send code"));
-        send.setTextSize(16);
+        send.setText(I18n.t("发送", "Send"));
+        send.setTextSize(20);
+        send.setAllCaps(false);
         send.setOnClickListener(v -> send());
-        root.addView(send, gap(dp(12), -1, dp(48)));
+        root.addView(send, gap(dp(12), -1, dp(56)));
 
         Button retry = new Button(this);
         retry.setText(I18n.t("重新搜索配对服务", "Search again"));

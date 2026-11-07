@@ -35,8 +35,8 @@ if ($HERE -match '[^\x00-\x7F]') {
 $LIB = Join-Path $ORIG_HERE 'libs'
 $OUT = Join-Path $HERE 'build'
 # 版本可通过环境变量覆盖：WU_VC=386 WU_VN=3.8.6 WU_APK=...
-$VC = if ($env:WU_VC) { [int]$env:WU_VC } else { 639 }
-$VN = if ($env:WU_VN) { $env:WU_VN } else { '6.3.9' }
+$VC = if ($env:WU_VC) { [int]$env:WU_VC } else { 643 }
+$VN = if ($env:WU_VN) { $env:WU_VN } else { '6.4.3' }
 $APKNAME = if ($env:WU_APK) { $env:WU_APK } else { "watch-unlock-$VN-signed.apk" }
 
 if (Test-Path $OUT) {

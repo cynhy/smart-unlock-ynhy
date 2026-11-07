@@ -59,8 +59,9 @@ public class WebAdbActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText(I18n.t("备用通道：不经过手机自己的 adbd 回环端口，用浏览器 + USB 直接调试安卓设备。",
-                "Fallback: debug an Android device over USB from a browser, without the phone's own adbd loopback port."));
+        sub.setText(I18n.t("两台手机用数据线互连：一台作主机授权另一台；也支持电脑主机。全程走 USB，不经过手机自己的 adbd 回环端口。",
+                "Two phones connected by a cable: one acts as the host and authorizes the other; a computer works too. "
+                        + "Everything goes over USB, without the phone's own adbd loopback port."));
         sub.setTextSize(12);
         sub.setTextColor(C_SUB);
         LinearLayout.LayoutParams lpSub = new LinearLayout.LayoutParams(-1, -2);
@@ -69,9 +70,11 @@ public class WebAdbActivity extends Activity {
         root.addView(sub, lpSub);
 
         root.addView(buildWhy(), gap(12));
-        root.addView(buildOwner(), gap(12));
+        root.addView(buildTwoPhones(), gap(12));
         root.addView(buildDevices(), gap(12));
         root.addView(buildSteps(), gap(12));
+        root.addView(buildCommands(), gap(12));
+        root.addView(buildOwner(), gap(12));
         root.addView(buildNotes(), gap(12));
         root.addView(buildActions(), gap(12));
 
@@ -91,6 +94,112 @@ public class WebAdbActivity extends Activity {
                         + "as a fallback when wireless debugging is unavailable.")));
         return c;
     }
+
+    /** 两台手机互连：主机手机通过 USB 给另一台手机授权 / 快速激活 */
+    private LinearLayout buildTwoPhones() {
+        LinearLayout c = card(C_INFO_BG);
+        c.addView(sectionTitle(I18n.t("两台手机互连（推荐用法）", "Two-phone setup (recommended)")));
+        c.addView(body(I18n.t(
+                "主机手机：装好本应用，用 Chrome / Edge 打开下面的网页；用 C-to-C 数据线或 OTG 转接头接上另一台手机。\n"
+                        + "被控手机：开发者选项里打开「USB 调试」，插线后在弹窗里点「允许」。\n"
+                        + "连接成功后，网页里就是一个 ADB 终端：可以查看设备、给本应用授权、启动 Shizuku、"
+                        + "加入电池白名单，等于用另一台手机快速把这台手机激活。\n"
+                        + "要求：主机必须是 Chromium 内核浏览器（Chrome for Android 支持 WebUSB）；"
+                        + "iOS 和 Firefox 不能作主机。",
+                "Host phone: install this app, open the page below in Chrome / Edge, then connect the other phone "
+                        + "with a C-to-C cable or an OTG adapter.\n"
+                        + "Target phone: enable “USB debugging” in Developer options and tap “Allow” on the prompt.\n"
+                        + "Once connected, the page becomes an ADB terminal: inspect the device, grant permissions to "
+                        + "this app, start Shizuku, add it to the battery whitelist — i.e. activate the target phone "
+                        + "from the host phone.\n"
+                        + "Requirements: a Chromium-based browser on the host (Chrome for Android supports WebUSB); "
+                        + "iOS and Firefox cannot be the host.")));
+        return c;
+    }
+
+    /** 可复制的小卡片：常用 ADB 指令 */
+    private LinearLayout buildCommands() {
+        LinearLayout c = card();
+        c.addView(sectionTitle(I18n.t("常用 ADB 指令（点卡片复制）",
+                "Common ADB commands (tap to copy)")));
+        c.addView(body(I18n.t(
+                "在网页的 ADB 终端里粘贴执行。带「shell」的是在目标手机上执行；"
+                        + "粘贴后按回车，一次执行一条。",
+                "Paste into the ADB terminal on the web page. Commands with “shell” run on the target phone; "
+                        + "press Enter after pasting, one command at a time.")));
+
+        c.addView(commandCard("① 检查连接 / Check connection", "adb devices -l",
+                I18n.t("应出现一行 device；没有则重新插线或在目标机上确认授权。",
+                        "A line ending in “device” should appear; otherwise reconnect or confirm authorization.")), gap(10));
+        c.addView(commandCard("② 看机型 / Model", "adb shell getprop ro.product.model",
+                I18n.t("确认连到的是想操作的那台手机。",
+                        "Confirms you are connected to the intended phone.")), gap(8));
+        c.addView(commandCard("③ 确认已装本应用 / App installed",
+                "adb shell pm list packages | grep watchunlock",
+                I18n.t("输出 com.watchunlock.app 说明目标机已安装。",
+                        "Output containing com.watchunlock.app means it is installed.")), gap(8));
+        c.addView(commandCard("④ 允许通知（Android 13+）/ Notifications",
+                "adb shell pm grant com.watchunlock.app android.permission.POST_NOTIFICATIONS",
+                I18n.t("配对通知需要通知权限；Android 12 及以下不需要执行。",
+                        "The pairing notification needs this on Android 13+; skip it on Android 12 and older.")), gap(8));
+        c.addView(commandCard("⑤ 加入电池白名单 / Battery whitelist",
+                "adb shell dumpsys deviceidle whitelist +com.watchunlock.app",
+                I18n.t("避免系统在后台清理解锁守护。",
+                        "Keeps the unlock daemon from being killed in the background.")), gap(8));
+        c.addView(commandCard("⑥ 允许后台运行 / Background ops",
+                "adb shell cmd appops set com.watchunlock.app RUN_IN_BACKGROUND allow",
+                I18n.t("部分 ROM 需要这一条才能让守护长期存活。",
+                        "Some ROMs need this for the daemon to survive.")), gap(8));
+        c.addView(commandCard("⑦ 打开本应用 / Launch app",
+                "adb shell am start -n com.watchunlock.app/.MainActivity",
+                I18n.t("在目标机上把本应用拉到前台，方便继续授权。",
+                        "Brings the app to the foreground on the target phone.")), gap(8));
+        c.addView(commandCard("⑧ 启动 Shizuku（如已安装）/ Start Shizuku",
+                "adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh",
+                I18n.t("目标机装了 Shizuku 时，用 ADB 拉起它，省去手动点「通过无线调试启动」。",
+                        "If Shizuku is installed on the target, this starts it over ADB.")), gap(8));
+        c.addView(commandCard("⑨ 看守护日志 / Daemon log",
+                "adb shell tail -n 80 /data/local/tmp/watch-unlock/wu.log",
+                I18n.t("排查解锁失败时先看这里，重点看 timing / su / FATAL。",
+                        "Check this first when unlocking fails; look for timing / su / FATAL.")), gap(8));
+        return c;
+    }
+
+    private LinearLayout commandCard(String title, String cmd, String note) {
+        LinearLayout c = card();
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextSize(13);
+        t.setTextColor(C_TEXT);
+        t.getPaint().setFakeBoldText(true);
+        c.addView(t);
+
+        TextView code = new TextView(this);
+        code.setText(cmd);
+        code.setTextSize(12);
+        code.setTypeface(android.graphics.Typeface.MONOSPACE);
+        code.setTextColor(C_TEXT);
+        code.setTextIsSelectable(true);
+        code.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(0xFFF3F4F6);
+        g.setCornerRadius(dp(8));
+        code.setBackground(g);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(6);
+        c.addView(code, lp);
+
+        c.addView(body(note));
+
+        Button copy = button(I18n.t("复制指令", "Copy command"));
+        copy.setOnClickListener(v -> copyText(I18n.t("指令已复制", "Command copied"), cmd));
+        LinearLayout.LayoutParams lpBtn = new LinearLayout.LayoutParams(-1, dp(40));
+        lpBtn.topMargin = dp(8);
+        copy.setLayoutParams(lpBtn);
+        c.addView(copy);
+        return c;
+    }
+
 
     private LinearLayout buildOwner() {
         LinearLayout c = card();

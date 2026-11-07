@@ -58,16 +58,44 @@ public class AdbPairingService extends Service {
     private AdbMdns connectMdns;
     private NotificationManager nm;
     private boolean foreground;
-    private boolean connecting;
+    private boolean connectingNow;
+    private boolean retryable;
+    private volatile int connectPort;
+    private int pairRetries;
+    private int connectRetries;
 
     private final Runnable connectTimeout = new Runnable() {
         @Override
         public void run() {
-            if (connecting) {
-                connecting = false;
+            if (sState == STATE_CONNECTING) {
+                connectingNow = false;
                 stopConnectDiscovery();
-                fail(I18n.t("配对成功，但没找到连接端口，请回到应用手动填写连接端口",
-                        "Paired, but the connect port was not found. Enter it manually in the app."), false);
+                fail(I18n.t("配对成功，但没找到连接端口。请回到应用，在「手动配对 / 连接」里填写无线调试主页面的端口，再点「连接测试」",
+                        "Paired, but the connect port was not found. Go back to the app, enter the port shown on the "
+                                + "Wireless debugging main screen under “Manual pairing / connection”, then tap “Test connection”."),
+                        false);
+            }
+        }
+    };
+
+    private final Runnable pairRetry = new Runnable() {
+        @Override
+        public void run() {
+            if (sState == STATE_SEARCHING && pairRetries < 6) {
+                pairRetries++;
+                if (pairMdns != null) pairMdns.restart();
+                main.postDelayed(this, 8000);
+            }
+        }
+    };
+
+    private final Runnable connectRetry = new Runnable() {
+        @Override
+        public void run() {
+            if (sState == STATE_CONNECTING && connectPort <= 0 && connectRetries < 8) {
+                connectRetries++;
+                if (connectMdns != null) connectMdns.restart();
+                main.postDelayed(this, 4000);
             }
         }
     };
@@ -119,6 +147,7 @@ public class AdbPairingService extends Service {
         foreground = true;
         setState(STATE_SEARCHING, I18n.t("正在搜索配对服务…", "Searching for the pairing service…"));
         startPairDiscovery();
+        startConnectDiscovery();
     }
 
     @Override
@@ -138,8 +167,11 @@ public class AdbPairingService extends Service {
         }
         // ACTION_START 或系统重启服务：确保在搜索状态
         if (sState == STATE_IDLE || sState == STATE_FAILED) {
+            pairRetries = 0;
+            connectRetries = 0;
             setState(STATE_SEARCHING, I18n.t("正在搜索配对服务…", "Searching for the pairing service…"));
             startPairDiscovery();
+            startConnectDiscovery();
         }
         return START_NOT_STICKY;
     }
@@ -147,6 +179,8 @@ public class AdbPairingService extends Service {
     @Override
     public void onDestroy() {
         main.removeCallbacks(connectTimeout);
+        main.removeCallbacks(pairRetry);
+        main.removeCallbacks(connectRetry);
         stopPairDiscovery();
         stopConnectDiscovery();
         if (foreground) {
@@ -183,34 +217,42 @@ public class AdbPairingService extends Service {
             }
         });
         pairMdns.start();
+        main.removeCallbacks(pairRetry);
+        main.postDelayed(pairRetry, 8000);
     }
 
     private void stopPairDiscovery() {
+        main.removeCallbacks(pairRetry);
         if (pairMdns != null) {
             pairMdns.stop();
             pairMdns = null;
         }
     }
 
+    /**
+     * 连接端口发现从一开始就并行运行，并缓存结果。
+     * 配对成功后系统会关闭配对服务，但 _adb-tls-connect 一直存在；
+     * 提前发现可以避开「配对成功却找不到连接端口」的竞态。
+     */
     private void startConnectDiscovery() {
         if (connectMdns != null) return;
-        connecting = true;
         connectMdns = new AdbMdns(this, AdbMdns.TLS_CONNECT, new AdbMdns.Callback() {
             @Override
             public void onPort(int port) {
                 if (port > 0) {
-                    connecting = false;
-                    main.removeCallbacks(connectTimeout);
-                    stopConnectDiscovery();
-                    connectNow(port);
+                    connectPort = port;
+                    Prefs.setAdbPort(AdbPairingService.this, port);
+                    if (sState == STATE_CONNECTING) {
+                        connectNow(port);
+                    }
                 }
             }
         });
         connectMdns.start();
-        main.postDelayed(connectTimeout, 10000);
     }
 
     private void stopConnectDiscovery() {
+        main.removeCallbacks(connectRetry);
         if (connectMdns != null) {
             connectMdns.stop();
             connectMdns = null;
@@ -226,17 +268,19 @@ public class AdbPairingService extends Service {
             return;
         }
         sPort = port;
+        pairRetries = 0;
         Prefs.setAdbPairPort(this, port);
         setState(STATE_FOUND, I18n.t(
-                "已找到配对服务。下拉展开通知，点「输入配对码」；"
-                        + "保持系统配对弹窗打开，不要离开无线调试页面。",
-                "Pairing service found. Expand the notification and tap “Enter pairing code”; "
-                        + "keep the system pairing dialog open and do not leave the Wireless debugging page."));
+                "已找到配对服务。下拉通知，点「输入配对码」在通知里输入；"
+                        + "或点「大按钮输入」打开输入页。保持系统配对弹窗打开，不要离开无线调试页面。",
+                "Pairing service found. Pull down the notification and tap “Enter pairing code” to type it inline, "
+                        + "or tap “Big input” to open a full-size input page. Keep the system pairing dialog open "
+                        + "and do not leave the Wireless debugging page."));
     }
 
     private void handleReply(Intent intent) {
         CharSequence code = readCode(intent);
-        int port = intent.getIntExtra(EXTRA_PORT, sPort);
+        int port = sPort > 0 ? sPort : Prefs.adbPairPort(this);
         if (code == null || code.toString().trim().length() != 6) {
             fail(I18n.t("配对码必须是 6 位数字", "The pairing code must be 6 digits"), true);
             return;
@@ -266,8 +310,17 @@ public class AdbPairingService extends Service {
                 main.post(new Runnable() {
                     @Override
                     public void run() {
+                        connectRetries = 0;
                         setState(STATE_CONNECTING, I18n.t("配对成功，正在连接…", "Paired. Connecting…"));
                         startConnectDiscovery();
+                        main.removeCallbacks(connectTimeout);
+                        main.postDelayed(connectTimeout, 25000);
+                        main.removeCallbacks(connectRetry);
+                        main.postDelayed(connectRetry, 4000);
+                        int cached = connectPort > 0 ? connectPort : Prefs.adbPort(AdbPairingService.this);
+                        if (cached > 0) {
+                            connectNow(cached);
+                        }
                     }
                 });
             }
@@ -275,11 +328,14 @@ public class AdbPairingService extends Service {
     }
 
     private void connectNow(final int port) {
+        if (connectingNow || port <= 0 || sState != STATE_CONNECTING) return;
+        connectingNow = true;
         new Thread(new Runnable() {
             @Override
             public void run() {
                 Prefs.setAdbPort(AdbPairingService.this, port);
                 boolean ok = AdbBridge.connect(AdbPairingService.this);
+                connectingNow = false;
                 if (ok) {
                     Prefs.setPrivilegeMode(AdbPairingService.this, Privilege.ADB);
                     Scripts.applyConfig(AdbPairingService.this);
@@ -288,6 +344,10 @@ public class AdbPairingService extends Service {
                     main.post(new Runnable() {
                         @Override
                         public void run() {
+                            main.removeCallbacks(connectTimeout);
+                            main.removeCallbacks(connectRetry);
+                            stopPairDiscovery();
+                            stopConnectDiscovery();
                             sPort = port;
                             setState(STATE_CONNECTED, I18n.t("配对成功，已连接（端口 %d）",
                                     "Paired and connected (port %d)", port));
@@ -298,8 +358,12 @@ public class AdbPairingService extends Service {
                     main.post(new Runnable() {
                         @Override
                         public void run() {
-                            fail(I18n.t("配对成功，但连接失败：%s", "Paired, but connection failed: %s",
-                                    AdbBridge.lastError()), false);
+                            if (sState == STATE_CONNECTING) {
+                                // 端口可能已变化：保持等待，继续尝试 mDNS 发现的新端口
+                                setState(STATE_CONNECTING, I18n.t("连接端口 %d 失败，继续查找…（%s）",
+                                        "Connect port %d failed, still searching… (%s)",
+                                        port, AdbBridge.lastError()));
+                            }
                         }
                     });
                 }
@@ -349,6 +413,7 @@ public class AdbPairingService extends Service {
     }
 
     private void fail(String message, boolean allowRetry) {
+        retryable = allowRetry;
         setState(STATE_FAILED, message);
         if (allowRetry) {
             // 配对弹窗可能还开着，重新开始搜索，通知里会再次出现输入入口
@@ -369,8 +434,13 @@ public class AdbPairingService extends Service {
     }
 
     private void setState(int state, String message) {
+        String m = message == null ? "" : message;
+        // 相同状态/文案不重复刷新通知：通知内联输入框在刷新时会收起，
+        // 用户正在输码时反复刷新会导致「点发送没反应、要点好几次」。
+        if (state == sState && m.equals(sMessage)) return;
         sState = state;
-        sMessage = message == null ? "" : message;
+        sMessage = m;
+        if (state != STATE_FAILED) retryable = false;
         updateNotification();
         Intent i = new Intent(ACTION_STATE);
         i.setPackage(getPackageName());
@@ -406,14 +476,13 @@ public class AdbPairingService extends Service {
             b.setOngoing(true).setAutoCancel(false);
         }
 
-        if ((sState == STATE_FOUND || sState == STATE_FAILED) && sPort > 0) {
+        if (sState == STATE_FOUND || (sState == STATE_FAILED && retryable)) {
             RemoteInput input = new RemoteInput.Builder(KEY_CODE)
                     .setLabel(I18n.t("6 位配对码", "6-digit pairing code"))
                     .setAllowFreeFormInput(true)
                     .build();
             Intent reply = new Intent(this, AdbPairingService.class);
             reply.setAction(ACTION_REPLY);
-            reply.putExtra(EXTRA_PORT, sPort);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 flags |= PendingIntent.FLAG_MUTABLE;
@@ -422,31 +491,48 @@ public class AdbPairingService extends Service {
             Notification.Action action = new Notification.Action.Builder(
                     R.drawable.ic_stat,
                     I18n.t("输入配对码", "Enter pairing code"),
-                    pi).addRemoteInput(input).setAllowGeneratedReplies(true).build();
+                    pi).addRemoteInput(input)
+                    .setAllowGeneratedReplies(false)
+                    .setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY)
+                    .build();
             b.addAction(action);
+
+            // 通知里的系统输入框较小，另给一个「大按钮输入」入口：
+            // 打开 PairCodeActivity，输入框和「发送配对码」按钮都更大。
+            Intent big = new Intent(this, PairCodeActivity.class);
+            big.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            big.putExtra(EXTRA_PORT, sPort);
+            b.addAction(new Notification.Action.Builder(
+                    R.drawable.ic_stat,
+                    I18n.t("大按钮输入", "Big input"),
+                    PendingIntent.getActivity(this, 4, big,
+                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)).build());
         }
 
-        Intent stop = new Intent(this, AdbPairingService.class);
-        stop.setAction(ACTION_STOP);
-        int stopFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            stopFlags |= PendingIntent.FLAG_IMMUTABLE;
+        if (sState != STATE_CONNECTED) {
+            Intent stop = new Intent(this, AdbPairingService.class);
+            stop.setAction(ACTION_STOP);
+            int stopFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                stopFlags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            b.addAction(new Notification.Action.Builder(
+                    R.drawable.ic_stat,
+                    I18n.t("停止", "Stop"),
+                    PendingIntent.getForegroundService(this, 3, stop, stopFlags)).build());
         }
-        b.addAction(new Notification.Action.Builder(
-                R.drawable.ic_stat,
-                I18n.t("停止", "Stop"),
-                PendingIntent.getForegroundService(this, 3, stop, stopFlags)).build());
 
         return b.build();
     }
 
     /**
      * 通知主体点击后的去处。
-     * 等待输码/失败时返回 null：此时点正文会把用户带出系统「无线调试」页面，
-     * 配对弹窗随之关闭，配对码失效。用户只需要下拉通知并使用 RemoteInput 动作。
+     * 等待输码时返回 null：此时点正文会把用户带出系统「无线调试」页面，
+     * 配对弹窗随之关闭，配对码失效。用户只需要下拉通知并使用动作按钮。
+     * 失败（尤其是没找到连接端口）时允许点正文回到应用手动填写端口。
      */
     private PendingIntent contentIntent() {
-        if ((sState == STATE_FOUND || sState == STATE_FAILED) && sPort > 0) {
+        if (sState == STATE_FOUND || (sState == STATE_FAILED && retryable)) {
             return null;
         }
         Intent i = new Intent(this, AdbActivity.class);
