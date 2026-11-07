@@ -1,33 +1,57 @@
 #!/system/bin/sh
 # 亮屏自动解锁（读取同目录 config.conf，可选 options.conf 覆盖）
-DIR=/sdcard/watch-unlock
+# 目录必须在 shell 私有区：/sdcard 是共享存储，里面的脚本会被任意 App 改写，
+# 而本脚本以 shell/root 执行 —— 放在共享存储等于交出提权入口。
+DIR=/data/local/tmp/watch-unlock
 CONF=$DIR/config.conf
 OPTS=$DIR/options.conf
+PIN_FILE=$DIR/pin
 LOG=$DIR/wu.log
 LOCK=/data/local/tmp/wu.lock
 LOCKDIR=/data/local/tmp/wu.daemon.d
 UD=/data/local/tmp/wu.unlock.d
 SHOT=/data/local/tmp/wu.shot
 STATE=/data/local/tmp/wu.state
-BT=/data/local/tmp/wu.bt
-HIT=/data/local/tmp/wu.hit
-CM=/data/local/tmp/wu.cm
-KW=/data/local/tmp/wu.kw
-UI=/data/local/tmp/wu.ui
+# 每个进程各用一份临时文件：亮屏重试、息屏预热、蓝牙广播、界面 --check 会并发，
+# 共用 wu.bt/wu.cm 时，一个进程刚清空、另一个读到半截 dump，就会误判「不在线」。
+TMP=.$$
+BT=/data/local/tmp/wu.bt$TMP
+HIT=/data/local/tmp/wu.hit$TMP
+CM=/data/local/tmp/wu.cm$TMP
+KW=/data/local/tmp/wu.kw$TMP
+UI=/data/local/tmp/wu.ui$TMP
 PRESENT=/data/local/tmp/wu.present
+IDENT=/data/local/tmp/wu.ident$TMP
+EXT=/data/local/tmp/wu.extended
+EXT_PIN=$DIR/extpin
+# 延长解锁的 clear / restore 互斥，防止「刚恢复又被另一个进程清除」来回震荡
+EXT_LOCK=/data/local/tmp/wu.extend.d
 
 [ -f "$CONF" ] || { echo "缺少 $CONF，先在应用里部署"; exit 1; }
-. $CONF
-[ -f "$OPTS" ] && . $OPTS
+. "$CONF"
+[ -f "$OPTS" ] && . "$OPTS"
+: ${PIN_FILE:=$DIR/pin}
+# PIN 只从 600 的独立文件读，config.conf 里不再出现明文
+PIN_TEXT=""
+[ -r "$PIN_FILE" ] && PIN_TEXT=$(cat "$PIN_FILE" 2>/dev/null)
+PIN_TEXT=$(printf '%s' "$PIN_TEXT" | tr -d '\r\n')
+: ${PIN_TEXT:=}
 : ${DEBOUNCE:=6}; : ${MAX_FAILS:=3}; : ${COOLDOWN:=600}
 : ${WATCH_MODE:=any}; : ${RSSI_MIN:=0}; : ${WIFI_SSIDS:=}
-# 新模型：TARGETS 每条「启用|MAC|名称」，WIFI_LIST 每条「启用|SSID」
+# 新模型：TARGETS 每条「启用|MAC|名称」，WIFI_LIST 每条「启用|SSID|BSSID|安全(0开放/1加密/?未知)」
 : ${TARGETS:=}; : ${WIFI_LIST:=}; : ${WIFI_REQUIRED:=0}; : ${WIFI_UNLOCK:=0}
 : ${SIM_GUARD:=0}
+: ${PROTECT_ENABLED:=0}; : ${MAC_STRICT:=1}; : ${MAC_NAME_FALLBACK:=0}
+: ${WIFI_BIND_BSSID:=1}; : ${WIFI_ALLOW_OPEN:=0}
+: ${EXTEND_UNLOCK:=0}
+# 1 = 每次亮屏都现场查询设备状态（慢 200~350ms，但缓存可能过期时更稳）；0 = 用事件缓存
+: ${PRESENCE_LIVE:=0}
 : ${MUSIC_RETURN:=0}; : ${MUSIC_OPEN_APP:=0}; : ${MUSIC_OPEN_PKG:=}; : ${MUSIC_SWIPE:=0}
+: ${SKIP_WHEN_UNLOCKED:=1}
 : ${POCKET_GUARD:=0}; : ${FAST_SETTLE:=0.1}; : ${DEBUG_TIMING:=1}
 TRIGGER_SRC=${TRIGGER_SRC:-event}
 QUIET_ALREADY=${QUIET_ALREADY:-0}
+RELOAD=/data/local/tmp/wu.reload
 
 LOGN=0
 log() {
@@ -37,6 +61,29 @@ log() {
     [ -n "$sz" ] && [ "$sz" -gt 1048576 ] && mv -f $LOG $LOG.old
   fi
   echo "$(date '+%m-%d %H:%M:%S') $*" >> $LOG
+}
+
+# 应用改设置后只写 config.conf 并 touch $RELOAD，守护在下一个事件前重读配置，
+# 不再为了一个开关整进程重启（每次重启至少 2 秒，还会丢一次亮屏事件）
+reload_conf() {
+  [ -f "$RELOAD" ] || return 0
+  rm -f "$RELOAD" 2>/dev/null
+  . "$CONF" 2>/dev/null
+  [ -f "$OPTS" ] && . "$OPTS"
+  PIN_TEXT=""
+  [ -r "$PIN_FILE" ] && PIN_TEXT=$(cat "$PIN_FILE" 2>/dev/null)
+  PIN_TEXT=$(printf '%s' "$PIN_TEXT" | tr -d '\r\n')
+  : ${PIN_TEXT:=}
+  : ${DEBOUNCE:=6}; : ${MAX_FAILS:=3}; : ${COOLDOWN:=600}
+  : ${WATCH_MODE:=any}; : ${RSSI_MIN:=0}; : ${WIFI_SSIDS:=}
+  : ${TARGETS:=}; : ${WIFI_LIST:=}; : ${WIFI_REQUIRED:=0}; : ${WIFI_UNLOCK:=0}
+  : ${SIM_GUARD:=0}
+  : ${PROTECT_ENABLED:=0}; : ${MAC_STRICT:=1}; : ${MAC_NAME_FALLBACK:=0}
+  : ${WIFI_BIND_BSSID:=1}; : ${WIFI_ALLOW_OPEN:=0}
+  : ${EXTEND_UNLOCK:=0}; : ${PRESENCE_LIVE:=0}
+  : ${MUSIC_RETURN:=0}; : ${MUSIC_OPEN_APP:=0}; : ${MUSIC_OPEN_PKG:=}; : ${MUSIC_SWIPE:=0}
+  : ${SKIP_WHEN_UNLOCKED:=1}
+  log "config reloaded (presence_live=${PRESENCE_LIVE} wifi_unlock=${WIFI_UNLOCK})"
 }
 
 # 毫秒时钟：读 /proc/uptime，无进程开销（10ms 精度，够用来定位瓶颈）
@@ -150,7 +197,11 @@ connected_macs() {
       mac=$1; sub(/\(.*/, "", mac); print mac
     }' $BT
   awk '
-    /StateMachine for/ { m=$4 }
+    /StateMachine for/ {
+      m=$0
+      sub(/^.*StateMachine for /, "", m)
+      sub(/[[:space:]].*$/, "", m)
+    }
     /mCurrentState:/ { if (/Connected/) print m }' $BT
   # 华为/EMUI：只有 "Peer: 41:42:**:**:**:b2" + "Connected: true"，MAC 被掩码
   awk '
@@ -184,7 +235,11 @@ device_connected() {
   sfx=$(echo "$mac" | awk -F: '{print $(NF-1)":"$NF}')
   [ -z "$sfx" ] && return 1
   awk -v s="$sfx" '
-    /StateMachine for/ { d=$4 }
+    /StateMachine for/ {
+      d=$0
+      sub(/^.*StateMachine for /, "", d)
+      sub(/[[:space:]].*$/, "", d)
+    }
     /mCurrentState:/   { if (d ~ s && /Connected/) f=1 }
     END { exit(f?0:1) }' $BT
 }
@@ -198,27 +253,66 @@ enabled_targets() {
 }
 
 # 在线判定：只算「已勾选启用」的设备；any 任一在线即触发，all 要求全部在线
+# 增强防护（PROTECT_ENABLED=1 且 MAC_STRICT=1）：目标带 MAC 时只认 MAC，
+# MAC 不匹配就判不在线并写日志；只有确实没有 MAC 的旧条目才允许按名称匹配，
+# 并标记「身份不可靠」。允许同名回退（MAC_NAME_FALLBACK=1）时，
+# 仅在已连接的设备里找到同名设备才放行，同样标记身份不可靠。
 watch_online() {
-  rm -f $HIT $CM $KW
-  dumpsys bluetooth_manager > $BT 2>/dev/null || return 1
+  rm -f $HIT $CM $KW $IDENT
+  WATCH_HIT=0; WATCH_TOTAL=0
+  dumpsys bluetooth_manager > $BT 2>/dev/null || return 2
+  # 空输出 / 极短的输出（系统繁忙、被截断）不能当成「不在线」：
+  # 记为 2=未知，调用方不得据此把延长解锁的密码写回
+  [ -s $BT ] || return 2
+  sz=$(wc -c < $BT 2>/dev/null | tr -d ' ')
+  case "$sz" in ''|*[!0-9]*) sz=0;; esac
+  [ "$sz" -gt 512 ] || return 2
+  grep -qi 'bluetooth' $BT 2>/dev/null || return 2
   connected_macs > $CM
   total=0; hit=0; first=""; last=""
+  strict=0
+  [ "$PROTECT_ENABLED" = "1" ] && [ "$MAC_STRICT" = "1" ] && strict=1
   if [ -n "$TARGETS" ]; then
     enabled_targets > $KW
     while IFS='|' read -r tmac tnm; do
       [ -z "$tmac" ] && [ -z "$tnm" ] && continue
       total=$((total+1))
-      ok=0; line=""
-      if [ -n "$tmac" ] && cm_has_mac "$tmac"; then
-        ok=1
-      elif [ -n "$tnm" ]; then
-        line=$(match_line "$tnm") || line=""
-        [ -n "$line" ] && device_connected "$line" && ok=1
+      ok=0; line=""; ident=""
+      if [ -n "$tmac" ]; then
+        if cm_has_mac "$tmac"; then
+          ok=1
+        elif [ $strict -eq 1 ]; then
+          if [ "$MAC_NAME_FALLBACK" = "1" ] && [ -n "$tnm" ]; then
+            line=$(match_line "$tnm") || line=""
+            if [ -n "$line" ] && device_connected "$line"; then
+              ok=1; ident="unreliable"
+              log "identity unreliable: MAC $tmac 不匹配，按已连接的同名设备「$tnm」放行"
+            else
+              log "mac mismatch: $tmac，名称回退也未找到在线的同名设备"
+            fi
+          else
+            log "mac mismatch: $tmac → 判为不在线"
+          fi
+        elif [ -n "$tnm" ]; then
+          # 增强防护关闭时保持旧行为：MAC 匹配不到再按名称
+          line=$(match_line "$tnm") || line=""
+          [ -n "$line" ] && device_connected "$line" && ok=1
+        fi
+      else
+        # 确实拿不到 MAC 的条目：只能按名称匹配，身份不可靠
+        if [ -n "$tnm" ]; then
+          line=$(match_line "$tnm") || line=""
+          if [ -n "$line" ] && device_connected "$line"; then
+            ok=1; ident="unreliable"
+            [ $strict -eq 1 ] && log "identity unreliable:「$tnm」没有 MAC，按名称匹配"
+          fi
+        fi
       fi
       if [ $ok -eq 1 ]; then
         hit=$((hit+1))
         last=${tmac:-$(echo "$line" | awk '{print $1}' | sed 's/(.*//')}
         [ -z "$first" ] && { first=1; echo "${last} (${tnm})" > $HIT; }
+        [ -n "$ident" ] && echo "$ident" > $IDENT
       fi
     done < $KW
   else
@@ -271,21 +365,72 @@ rssi_ok() {
   return 0
 }
 
-wifi_ssid() {
-  s=$(dumpsys wifi 2>/dev/null | grep -m1 -o 'SSID: "[^"]*"' | head -n1 | sed 's/SSID: //; s/"//g')
-  [ -z "$s" ] && s=$(dumpsys wifi 2>/dev/null | grep -m1 -o 'SSID: [^,}]*' | head -n1 | sed 's/SSID: //; s/"//g')
-  [ -z "$s" ] && s=$(cmd wifi status 2>/dev/null | grep -m1 -i 'ssid' | sed 's/.*SSID: //; s/"//g')
-  trim "$s" | head -n1
+# 当前 WiFi：输出 "SSID|BSSID|安全标记"。
+# 连接状态优先用 `cmd wifi status`（官方稳定接口），只有拿不到时才退回 dumpsys；
+# 安全类型从 dumpsys 的 WifiConfiguration 里取，取不到记为 ?（未知）。
+wifi_state() {
+  st=$(cmd wifi status 2>/dev/null)
+  s=$(printf '%s\n' "$st" | grep -m1 -o 'SSID: "[^"]*"' | head -n1 | sed 's/SSID: //; s/"//g')
+  [ -z "$s" ] && s=$(printf '%s\n' "$st" | grep -m1 'Wifi is connected to "' | sed 's/.*connected to "//; s/".*//')
+  [ -z "$s" ] && s=$(dumpsys wifi 2>/dev/null | grep -m1 -o 'SSID: "[^"]*"' | head -n1 | sed 's/SSID: //; s/"//g')
+  s=$(trim "$s" | head -n1)
+
+  b=$(printf '%s\n' "$st" | grep -m1 -o 'BSSID: [0-9A-Fa-f:]*' | head -n1 | sed 's/BSSID: //' | tr 'a-f' 'A-F')
+  [ -z "$b" ] && b=$(dumpsys wifi 2>/dev/null | grep -m1 -o 'mBSSID=[0-9A-Fa-f:]*' | sed 's/mBSSID=//' | tr 'a-f' 'A-F')
+  case "$b" in 02:00:00:00:00:00|00:00:00:00:00:00) b="";; esac
+
+  sec="?"
+  if [ -n "$s" ]; then
+    key=$(dumpsys wifi 2>/dev/null | grep -m1 -F "$s" | grep -oE 'WPA3_SAE|WPA2_PSK|WPA_PSK|WPA2_EAP|WPA_EAP|SAE|OWE|NONE|EAP' | head -n1)
+    case "$key" in
+      NONE) sec=0;;
+      "") ;;
+      *) sec=1;;
+    esac
+  fi
+  echo "${s}|${b}|${sec}"
 }
 
+wifi_ssid() {
+  wifi_state | cut -d'|' -f1
+}
+
+# 可信 WiFi：SSID 必须命中；增强防护开启且 WIFI_BIND_BSSID=1 时，
+# 还要求 BSSID 一致、且当前网络不是开放网络（除非显式允许开放网络）。
 wifi_trusted() {
-  s=$(wifi_ssid)
+  cur=$(wifi_state)
+  s=$(printf '%s' "$cur" | cut -d'|' -f1)
+  cb=$(printf '%s' "$cur" | cut -d'|' -f2)
+  cs=$(printf '%s' "$cur" | cut -d'|' -f3)
   [ -z "$s" ] && return 1
   if [ -n "$WIFI_LIST" ]; then
-    echo "$WIFI_LIST" | tr ';' '\n' | while IFS='|' read -r en ssid; do
+    echo "$WIFI_LIST" | tr ';' '\n' | while IFS='|' read -r en ssid bssid sec; do
       [ "$en" = "1" ] || continue
       ssid=$(trim "$ssid")
-      [ -n "$ssid" ] && [ "$s" = "$ssid" ] && { echo yes; break; }
+      [ -n "$ssid" ] && [ "$s" = "$ssid" ] || continue
+      if [ "$PROTECT_ENABLED" = "1" ] && [ "$WIFI_BIND_BSSID" = "1" ]; then
+        if [ "$cs" = "0" ] && [ "$WIFI_ALLOW_OPEN" != "1" ]; then
+          log "wifi: $s 是开放网络，增强防护拒绝"
+          continue
+        fi
+        case "$sec" in
+          ?|"") log "wifi: $s 未记录安全类型（旧条目，按加密处理）";;
+          0) if [ "$WIFI_ALLOW_OPEN" != "1" ]; then
+                log "wifi: 目标 $s 被标记为开放网络，增强防护拒绝"
+                continue
+              fi;;
+        esac
+        bssid=$(echo "$bssid" | tr 'a-f' 'A-F')
+        if [ -n "$bssid" ]; then
+          if [ -z "$cb" ] || [ "$cb" != "$bssid" ]; then
+            log "wifi: BSSID 不匹配（期望 ${bssid}，实际 ${cb:-未知}）"
+            continue
+          fi
+        else
+          log "wifi: $s 未绑定 BSSID（旧条目，身份不可靠）"
+        fi
+      fi
+      echo yes; break
     done | grep -q yes
     return $?
   fi
@@ -315,11 +460,15 @@ presence_refresh() {
     [ "${track:-0}" = "1" ] && tr=1
   fi
   ts=$(date +%s)
-  bt_ok=0; w_ok=0
-  watch_online && bt_ok=1
+  bt_ok=0; w_ok=0; bt_unknown=0
+  watch_online
+  case "$?" in
+    0) bt_ok=1;;
+    2) bt_unknown=1;;
+  esac
   # WiFi 只在被启用时才参与判定；两种模式：
   #   WIFI_REQUIRED=1  蓝牙必须在线，且连着可信 WiFi（更严格，冷查多约 300ms）
-  #   WIFI_UNLOCK=1    蓝牙或可信 WiFi 任一在线即可（WiFi 可独立解锁）
+  #   WIFI_UNLOCK=1    蓝牙或可信 WiFi 任一在线即可（WiFi 解锁）
   if [ "$WIFI_REQUIRED" = "1" ] || [ "$WIFI_UNLOCK" = "1" ]; then
     wifi_trusted && w_ok=1
   fi
@@ -336,16 +485,38 @@ presence_refresh() {
     else online=no; src=none
     fi
   fi
-  echo "ts=$ts online=$online src=$src hit=${WATCH_HIT:-0} total=${WATCH_TOTAL:-0} track=$tr" > $PRESENT.tmp \
-    && mv -f $PRESENT.tmp $PRESENT
+  # 蓝牙 dump 失败而其它来源也没给出在线结论时，记「未知」而不是「离线」。
+  # 未知只影响解锁注入（本次不注入，安全），绝不触发延长解锁的密码写回。
+  if [ "$online" = "no" ] && [ $bt_unknown -eq 1 ]; then
+    online=unknown; src=bt-unknown
+  fi
+  echo "ts=$ts online=$online src=$src hit=${WATCH_HIT:-0} total=${WATCH_TOTAL:-0} track=$tr" > $PRESENT.tmp$TMP \
+    && mv -f $PRESENT.tmp$TMP $PRESENT
 }
 
-# 亮屏热路径：只读缓存，0 进程查询。
+# 亮屏热路径：优先读缓存，0 进程查询。
 # 缓存由「蓝牙连接/断开广播 → 应用 → --present」实时维护；只有应用不在
-# （被杀 / 未启动 / 没有蓝牙权限）时才现场查一次，慢但正确
+# （被杀 / 未启动 / 没有蓝牙权限）时才现场查一次，慢但正确。
+# 增强防护里可打开 PRESENCE_LIVE=1：每次都现查，不再信任缓存。
 present_ok_fast() {
-  # 开了 RSSI 门槛就必须现查：缓存里没有 RSSI
-  [ -n "$RSSI_MIN" ] && [ "$RSSI_MIN" != "0" ] && { presence_refresh; }
+  # 每次现查（可选项）：慢 200~350ms，但完全不受缓存状态影响
+  if [ "${PRESENCE_LIVE:-0}" = "1" ]; then
+    presence_refresh
+    if [ "$online" = "yes" ]; then
+      log "present(live): $src ${WATCH_HIT}/${WATCH_TOTAL}"
+      return 0
+    fi
+    return 1
+  fi
+  # 开了 RSSI 门槛也必须现查（缓存里没有 RSSI）；这次结果直接复用，不再查第二遍
+  if [ -n "$RSSI_MIN" ] && [ "$RSSI_MIN" != "0" ]; then
+    presence_refresh
+    if [ "$online" = "yes" ]; then
+      log "present(live): $src ${WATCH_HIT}/${WATCH_TOTAL} (rssi)"
+      return 0
+    fi
+    return 1
+  fi
   online=no; src=none; hit=0; total=0; track=0
   [ -f $PRESENT ] && . $PRESENT
   if [ "$online" = "yes" ] && [ "$track" = "1" ] && app_alive; then
@@ -451,17 +622,43 @@ unlock_ok() {
   fi
   fails=0; cooldowns=0; paused_until=0; status=ok; reason=ok
   save_state
+  # 延长解锁：刚刚成功解锁一次，且设备在线 → 临时关闭锁屏密码
+  if [ "$EXTEND_UNLOCK" = "1" ] && [ ! -f $EXT ]; then
+    ( extend_clear ) &
+  fi
   # 音乐锁屏返回：放到后台，避免拖慢解锁完成时间
   [ "$MUSIC_RETURN" = "1" ] && ( music_return ) &
   return 0
 }
 
-# 音乐锁屏在输入密码后仍停在音乐页：优先按包名打开主界面，否则向右滑动一次
+# 打开指定应用的启动 Activity。
+# 注意：`cmd package resolve-activity -p <pkg>` 只带包名时，很多 ROM 会解析到
+# IntentResolver（com.android.intentresolver/.ResolverActivity），am start 它就会弹出
+# 「没有应用可执行此操作」。必须先显式带上 MAIN + LAUNCHER 才能拿到真实启动组件。
+launch_app() {
+  pkg=$1
+  comp=$(cmd package resolve-activity --brief \
+         -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
+         -p "$pkg" 2>/dev/null | grep -m1 "^$pkg/" | tr -d '\r')
+  if [ -n "$comp" ]; then
+    if am start -n "$comp" >/dev/null 2>&1; then return 0; fi
+    log "music: am start -n $comp failed, fallback"
+  fi
+  if am start -a android.intent.action.MAIN \
+      -c android.intent.category.LAUNCHER -p "$pkg" >/dev/null 2>&1; then
+    return 0
+  fi
+  monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 && return 0
+  log "music: open $pkg failed (resolve: $(cmd package resolve-activity --brief \
+      -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$pkg" 2>&1 | tr '\n' ' '))"
+  return 1
+}
+
+# 音乐锁屏在输入密码后仍停在音乐页：优先打开指定应用，否则向右滑动一次
 music_return() {
   sleep 0.6
   if [ "$MUSIC_OPEN_APP" = "1" ] && [ -n "$MUSIC_OPEN_PKG" ]; then
-    if am start -a android.intent.action.MAIN \
-        -c android.intent.category.LAUNCHER -p "$MUSIC_OPEN_PKG" >/dev/null 2>&1; then
+    if launch_app "$MUSIC_OPEN_PKG"; then
       log "music: opened $MUSIC_OPEN_PKG"
       return 0
     fi
@@ -540,6 +737,131 @@ do_unlock_slow() {
   save_state
 }
 
+# ---- 延长解锁（实验性，激进手段）----
+# 原理：确认设备在线并成功解锁一次后，用 locksettings 清除锁屏密码并 set-disabled true，
+# 之后亮屏无需再输入；在线条件不再满足时，先连续 3 次独立判定离线（立即 → +0.5s → +1.5s），
+# 三次都离线才 set-pin 写回原 PIN 并 set-disabled false，避免一次瞬时误判来回震荡。
+# 指纹/面容在清除时会被系统作废。
+ext_pin_ok() {
+  [ -s "$EXT_PIN" ] && grep -qE '^[0-9]{4,16}$' "$EXT_PIN" 2>/dev/null
+}
+
+# clear / restore / 三次确认互斥：避免「刚恢复，另一个进程又 clear」来回震荡
+extend_lock_begin() {
+  if [ -d $EXT_LOCK ]; then
+    old=$(cat $EXT_LOCK/pid 2>/dev/null)
+    ts=$(cat $EXT_LOCK/ts 2>/dev/null)
+    case "$ts" in ''|*[!0-9]*) ts=0;; esac
+    if [ -n "$old" ] && kill -0 "$old" 2>/dev/null \
+        && [ $(( $(now_ms) - ts )) -lt 30000 ]; then
+      return 1
+    fi
+    rm -rf $EXT_LOCK 2>/dev/null
+  fi
+  mkdir $EXT_LOCK 2>/dev/null || return 1
+  echo $$ > $EXT_LOCK/pid 2>/dev/null
+  now_ms > $EXT_LOCK/ts 2>/dev/null
+  return 0
+}
+extend_lock_end() { rm -rf $EXT_LOCK 2>/dev/null; }
+
+extend_clear() {
+  [ "$EXTEND_UNLOCK" = "1" ] || return 1
+  [ -f $EXT ] && return 0
+  ext_pin_ok || { log "extend: extpin 缺失或格式错误，拒绝关闭锁屏密码"; return 1; }
+  extend_lock_begin || { log "extend: 另一个恢复/清除正在进行，跳过本次清除"; return 1; }
+  # 清除前复核：刚解锁完但设备已经离开时，不要关掉密码
+  if ! present_ok_fast; then
+    log "extend: 清除前复核已不在线，取消本次清除"
+    extend_lock_end
+    return 1
+  fi
+  EPIN=$(cat "$EXT_PIN" 2>/dev/null | tr -d '\r\n')
+  if ! locksettings verify --old "$EPIN" --user 0 >/dev/null 2>&1; then
+    log "extend: 旧 PIN 校验失败，拒绝关闭锁屏密码"
+    extend_lock_end
+    return 1
+  fi
+  locksettings clear --old "$EPIN" --user 0 >/dev/null 2>&1
+  locksettings set-disabled true --user 0 >/dev/null 2>&1
+  dis=$(locksettings get-disabled --user 0 2>/dev/null | tr -d '\r\n')
+  if [ "$dis" = "true" ] || [ "$dis" = "1" ]; then
+    printf '%s\n' "$(date +%s)" > $EXT
+    log "extend: 锁屏密码已临时关闭（生物识别已作废；断开设备会先做三次确认再恢复）"
+    extend_lock_end
+    return 0
+  fi
+  locksettings set-pin "$EPIN" --user 0 >/dev/null 2>&1
+  locksettings set-disabled false --user 0 >/dev/null 2>&1
+  log "extend: 系统拒绝关闭锁屏密码（$dis），已回滚"
+  extend_lock_end
+  return 1
+}
+
+extend_restore() {
+  [ -f $EXT ] || return 0
+  ext_pin_ok || {
+    log "extend: FATAL extpin 缺失，无法自动恢复；请手动解锁并在应用里重新部署"
+    return 1
+  }
+  EPIN=$(cat "$EXT_PIN" 2>/dev/null | tr -d '\r\n')
+  n=0
+  while [ $n -lt 3 ]; do
+    locksettings set-pin "$EPIN" --user 0 >/dev/null 2>&1
+    locksettings set-disabled false --user 0 >/dev/null 2>&1
+    dis=$(locksettings get-disabled --user 0 2>/dev/null | tr -d '\r\n')
+    if [ "$dis" = "false" ] || [ "$dis" = "0" ]; then
+      rm -f $EXT
+      log "extend: 锁屏密码已恢复"
+      return 0
+    fi
+    n=$((n+1)); sleep 0.3
+  done
+  log "extend: FATAL 恢复锁屏密码失败（$dis），请立刻手动设置密码"
+  return 1
+}
+
+# 一次全新的现场判定，只输出 yes/no/unknown（不读缓存）
+presence_now() {
+  presence_refresh
+  echo "${online:-no}"
+}
+
+# 连续 3 次独立判定离线才恢复密码：立即 → +0.5s → +1.5s。
+# 任何一次「在线」或「无法判定」都放弃本次恢复，避免一次偶发的空 dump 把密码写回。
+# 返回 0 = 已恢复或本来就不需要；1 = 仍在延长（本次不注入 PIN）
+extend_check_offline() {
+  [ -f $EXT ] || return 0
+  extend_lock_begin || { log "extend: 另一个判定/恢复正在进行，跳过"; return 1; }
+  st=$(presence_now)
+  if [ "$st" != "no" ]; then
+    log "extend: 第 1/3 次判定 ${st}，放弃恢复"
+    extend_lock_end
+    return 1
+  fi
+  sleep 0.5
+  st=$(presence_now)
+  if [ "$st" != "no" ]; then
+    log "extend: 第 2/3 次判定 ${st}，放弃恢复"
+    extend_lock_end
+    return 1
+  fi
+  sleep 1
+  st=$(presence_now)
+  if [ "$st" != "no" ]; then
+    log "extend: 第 3/3 次判定 ${st}，放弃恢复"
+    extend_lock_end
+    return 1
+  fi
+  log "extend: 连续 3 次判定离线，恢复锁屏密码"
+  if extend_restore; then
+    extend_lock_end
+    return 0
+  fi
+  extend_lock_end
+  return 1
+}
+
 # 热路径复核：直接看当前焦点，跳过 policy dump（省约 30~40ms）
 locked_fast() {
   dumpsys window 2>/dev/null | grep -m1 mCurrentFocus \
@@ -549,9 +871,34 @@ locked_fast() {
 # 热路径：亮屏直接注入，不再 dismiss/滑动、不再 uiautomator dump
 do_unlock() {
   T0=$(now_ms); T_INJ=""
+  if [ -z "$PIN_TEXT" ]; then
+    log "abort: pin file missing ($PIN_FILE)"
+    status=skip; reason=no_pin; save_state; return
+  fi
+  # 延长解锁：已延长且仍在可信状态 → 无需再注入；失去可信状态 → 三次确认后才恢复密码
+  if [ -f $EXT ]; then
+    if present_ok_fast; then
+      [ "$QUIET_ALREADY" = "1" ] || log "extend: active, skip injection"
+      return
+    fi
+    if extend_check_offline; then
+      log "extend: 三次确认离线，密码已恢复，继续常规注入"
+    else
+      [ "$QUIET_ALREADY" = "1" ] || log "extend: 复核后仍在线/未知，本次不注入"
+      return
+    fi
+  fi
   # 息屏/口袋模式时注入没有意义；POCKET_GUARD=1 才多花一次 dumpsys
   if [ "$POCKET_GUARD" = "1" ] && ! awake; then log "skip: display off"; return; fi
-  if ! locked; then [ "$QUIET_ALREADY" = "1" ] || log "skip: already unlocked"; return; fi
+  if ! locked; then
+    # 默认跳过：亮屏时设备本来就没锁，再注入 PIN 只会干扰正常使用。
+    # 关掉这个开关则强制注入一次（部分 ROM 的锁定状态上报不准时可用）。
+    if [ "$SKIP_WHEN_UNLOCKED" = "1" ]; then
+      [ "$QUIET_ALREADY" = "1" ] || log "skip: already unlocked"
+      return
+    fi
+    log "note: already unlocked, forced injection (SKIP_WHEN_UNLOCKED=0)"
+  fi
   T_LOCK=$(now_ms)
   log "trigger: $TRIGGER_SRC"
   # SIM PIN 界面绝不能注入手机 PIN，否则可能锁卡；默认关闭，只有设置里开启才检查
@@ -627,7 +974,16 @@ case "$1" in
     # 应用调用。带第二个参数 track 表示「应用正在监听蓝牙事件」，缓存可长期信任；
     # 不带参数只刷新内容、保留原有登记状态（息屏预热用）
     presence_refresh ${2:-}
+    # 延长解锁：缓存说不在线不直接写回密码；连续 3 次独立判定都离线才算真的离开
+    if [ -f $EXT ]; then
+      extend_check_offline || true
+    fi
     cat $PRESENT 2>/dev/null
+    exit 0
+    ;;
+  --extend-restore)
+    extend_restore
+    echo "extend restored"
     exit 0
     ;;
   --untrack)
@@ -636,8 +992,8 @@ case "$1" in
     if [ -f $PRESENT ]; then
       ts=0; online=no; src=none; hit=0; total=0
       . $PRESENT
-      echo "ts=${ts:-0} online=$online src=$src hit=${hit:-0} total=${total:-0} track=0" > $PRESENT.tmp \
-        && mv -f $PRESENT.tmp $PRESENT
+      echo "ts=${ts:-0} online=$online src=$src hit=${hit:-0} total=${total:-0} track=0" > $PRESENT.tmp$TMP \
+        && mv -f $PRESENT.tmp$TMP $PRESENT
     fi
     exit 0
     ;;
@@ -667,7 +1023,11 @@ if [ "$1" = "--check" ]; then
   t=$(now_ms)
   watch_online >/dev/null && online=yes || online=no
   bt_ms=$(( $(now_ms) - t ))
-  own=$(wifi_ssid); wtr=no
+  cur=$(wifi_state)
+  own=$(printf '%s' "$cur" | cut -d'|' -f1)
+  cur_b=$(printf '%s' "$cur" | cut -d'|' -f2)
+  cur_s=$(printf '%s' "$cur" | cut -d'|' -f3)
+  wtr=no
   wifi_trusted && wtr=yes
   mac=$(awk '{print $1}' $HIT 2>/dev/null | sed 's/(.*//')
   if [ -z "$mac" ]; then
@@ -695,7 +1055,14 @@ if [ "$1" = "--check" ]; then
   echo "wifi_required: ${WIFI_REQUIRED:-0}"
   echo "sim_guard   : ${SIM_GUARD:-0}"
   echo "wifi_ssid   : ${own:-（未连接）}"
+  echo "wifi_bssid  : ${cur_b:-（未知）}"
+  echo "wifi_sec    : ${cur_s:-?}"
   echo "wifi_trusted: $wtr"
+  echo "presence_live: ${PRESENCE_LIVE:-0}"
+  echo "protect     : ${PROTECT_ENABLED:-0} (mac_strict=${MAC_STRICT:-1} fallback=${MAC_NAME_FALLBACK:-0} bssid=${WIFI_BIND_BSSID:-1} allow_open=${WIFI_ALLOW_OPEN:-0})"
+  echo "identity    : $(cat $IDENT 2>/dev/null | head -n1)"
+  echo "extended    : $([ -f $EXT ] && echo yes || echo no)"
+  echo "extend_pin  : $(ext_pin_ok && echo ok || echo missing)"
   echo "locked      : $(locked && echo yes || echo no)"
   echo "awake       : $(awake && echo yes || echo no)"
   echo "pin_len     : ${#PIN_TEXT}"
@@ -733,12 +1100,24 @@ done
 
 load_state
 last=0
-log "daemon started (pid $$) status=$status mode=${WATCH_MODE:-any} rssi_min=${RSSI_MIN:-0} wifi_unlock=${WIFI_UNLOCK:-0} wifi_required=${WIFI_REQUIRED:-0} sim_guard=${SIM_GUARD:-0}"
+log "daemon started (pid $$) status=$status mode=${WATCH_MODE:-any} rssi_min=${RSSI_MIN:-0} wifi_unlock=${WIFI_UNLOCK:-0} wifi_required=${WIFI_REQUIRED:-0} sim_guard=${SIM_GUARD:-0} protect=${PROTECT_ENABLED:-0} extend=${EXTEND_UNLOCK:-0} presence_live=${PRESENCE_LIVE:-0}"
 if [ "$status" = "disabled" ]; then
   log "state=disabled, refuse to start；请核对密码后重新部署"
   rm -rf $LOCKDIR 2>/dev/null
   rm -f $LOCK
   exit 0
+fi
+
+# 延长解锁安全兜底：重启/开机后若还残留「密码已关闭」状态，
+# 但功能已关闭或 extpin 丢失，立刻恢复，避免手机长期处于无锁状态
+if [ -f $EXT ]; then
+  if [ "$EXTEND_UNLOCK" != "1" ] || ! ext_pin_ok; then
+    log "extend: 启动时发现残留延长状态（功能关闭或 extpin 缺失），立即恢复密码"
+    extend_restore
+  elif ! present_ok_fast; then
+    log "extend: 启动时判定不在线，进入三次确认"
+    extend_check_offline || true
+  fi
 fi
 
 # 启动时刷新一次在线缓存；之后完全由应用收到「蓝牙连接/断开广播」时调用 --present 维护，
@@ -773,6 +1152,7 @@ while :; do
     # 息屏不参与防抖：否则「锁屏后 2 秒内又亮屏」会被上一次事件吞掉
     if [ "$ev" = "screen_off" ]; then last=0; continue; fi
     load_state
+    reload_conf
     if [ "$status" = "disabled" ]; then
       log "state=disabled, stop daemon"
       kill $$ 2>/dev/null

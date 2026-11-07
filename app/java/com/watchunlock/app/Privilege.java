@@ -62,6 +62,10 @@ public final class Privilege {
         return isReady();
     }
 
+    public static boolean probeRoot(int timeoutMs) {
+        return sApp != null && RootBridge.probe(sApp, timeoutMs);
+    }
+
     public static String statusText() {
         if (sApp == null) return "";
         switch (Prefs.privilegeMode(sApp)) {

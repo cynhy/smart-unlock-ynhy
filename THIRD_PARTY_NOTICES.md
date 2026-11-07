@@ -31,6 +31,18 @@
 - 用途：无线调试配对握手、隐藏 API 访问
 - 许可证：随 Kadb 分发，Apache License 2.0
 
+## 《搞机工具箱》Web 版 6.3.9
+
+- 作者：晨钟酱（CzJam）
+- 项目：https://github.com/CzJam/gjgjxweb
+- 在线地址：https://czjam.github.io/gjgjxweb/
+- 用途：本应用「网页版 ADB」入口链接的外部网页（WebUSB 直连安卓设备）
+- 许可证：**GNU General Public License v3.0（GPL-3.0）**
+- 说明：**仅提供链接，未打包、未修改其代码**。本应用不是该网页的衍生作品，也不与其作者存在隶属关系；网页的版权、内容与数据安全由该项目自行负责。
+- 如再分发该网页或其修改版，须遵循 GPL-3.0：提供对应源码、保留版权与许可声明。
+- GPL-3.0 全文：https://www.gnu.org/licenses/gpl-3.0.html
+
 ---
 
-Apache License 2.0 全文见 https://www.apache.org/licenses/LICENSE-2.0
+Apache License 2.0 全文见 https://www.apache.org/licenses/LICENSE-2.0  
+GNU GPL v3.0 全文见 https://www.gnu.org/licenses/gpl-3.0.html

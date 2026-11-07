@@ -1,52 +1,42 @@
-﻿# 手工构建 APK（不依赖 Gradle）：aapt2 -> javac -> d8 -> zipalign -> apksigner
-#
-# 用法示例：
-#   powershell -ExecutionPolicy Bypass -File app\build.ps1                       # 3.3.3，未签名
-#   powershell -ExecutionPolicy Bypass -File app\build.ps1 -VersionName 3.0 -VersionCode 30 -NoKadb
-#
-# 前置条件：
-#   $env:JAVA_HOME     指向 JDK 17
-#   $env:ANDROID_HOME  指向 Android SDK（需含 build-tools >= 36 与 platform android-34）
-#   依赖 jar 放在 libs\，见 libs\README.md
-#
-# 签名（可选）：设置环境变量 SMART_KS_PASS 为密钥库口令，并传 -Keystore 与 -KeyAlias。
-# 口令只从环境变量读取，不落盘、不写入命令行历史。
-
-param(
-  [string]$VersionName = '3.3.3',
-  [int]$VersionCode = 333,
-  [string]$Keystore = '',
-  [string]$KeyAlias = 'phone unlock',
-  [switch]$NoKadb,
-  [switch]$Unsigned
-)
-
+﻿# 手工构建 APK（无 Gradle）：aapt2 -> javac -> d8 -> zipalign -> apksigner
+# 用法：powershell -ExecutionPolicy Bypass -File app\build.ps1
+# 依赖：Shizuku api/provider + Kadb(内置无线调试) 及其运行库，见 04-工具\wulibs
 $ErrorActionPreference = 'Stop'
 
-$HERE = Split-Path -Parent $MyInvocation.MyCommand.Path
-$LIB = Join-Path (Split-Path $HERE -Parent) 'libs'
-$OUT = Join-Path $HERE 'build'
-
-if (-not $env:JAVA_HOME) { throw '请先设置 JAVA_HOME（JDK 17）' }
-if (-not $env:ANDROID_HOME) { throw '请先设置 ANDROID_HOME（Android SDK 根目录）' }
-
-$JDK = $env:JAVA_HOME
-$SDK = $env:ANDROID_HOME
-
-# 选版本号最大的 build-tools；Kadb 是 Java 21 字节码，d8 必须 >= 36 才能处理
-$btDir = Get-ChildItem (Join-Path $SDK 'build-tools') -Directory |
-  Sort-Object { [version](($_.Name -split '-')[0]) } -Descending | Select-Object -First 1
-$BT = $btDir.FullName
-if ([version](($btDir.Name -split '-')[0]) -lt [version]'36.0.0') {
-  Write-Warning "当前 build-tools 为 $($btDir.Name)，处理 Kadb 需要 >= 36"
-}
-
+$SDK = 'D:\shengchanli\sdk'
+# build-tools 34 的 d8 无法处理 Kadb 的 Java 21 class（major 65），必须用 36
+$BT = Join-Path $SDK 'build-tools\36.0.0'
 $AJAR = Join-Path $SDK 'platforms\android-34\android.jar'
-if (-not (Test-Path $AJAR)) {
-  $p = Get-ChildItem (Join-Path $SDK 'platforms') -Directory |
-    Sort-Object { [version]($_.Name -replace 'android-', '') } -Descending | Select-Object -First 1
-  $AJAR = Join-Path $p.FullName 'android.jar'
+$JDK = 'D:\shengchanli\jdk17.0.21_0'
+$env:JAVA_HOME = $JDK
+
+$HERE = Split-Path -Parent $MyInvocation.MyCommand.Path
+# aapt2 36 在含中文的路径下会报 “failed to open directory (2)”，
+# 自动把源码镜像到 ASCII 暂存目录构建，产物再复制回原目录，避免路径问题。
+$ORIG_OUT = Join-Path $HERE 'build'
+$ORIG_HERE = $HERE
+if ($HERE -match '[^\x00-\x7F]') {
+  $STAGE = Join-Path $env:TEMP 'watch-unlock-build'
+  if (Test-Path $STAGE) {
+    try { Remove-Item $STAGE -Recurse -Force -ErrorAction Stop } catch {
+      Rename-Item $STAGE ("watch-unlock-build_" + (Get-Date -Format 'HHmmss')) -ErrorAction SilentlyContinue
+    }
+  }
+  New-Item -ItemType Directory -Force -Path $STAGE | Out-Null
+  Copy-Item "$HERE\res" $STAGE -Recurse -Force
+  Copy-Item "$HERE\assets" $STAGE -Recurse -Force
+  Copy-Item "$HERE\java" $STAGE -Recurse -Force
+  Copy-Item "$HERE\AndroidManifest.xml" $STAGE -Force
+  $HERE = $STAGE
+  Write-Host ">>> 路径含中文，已镜像到 $STAGE"
 }
+$LIB = Join-Path $ORIG_HERE 'libs'
+$WULIB = 'E:\guocheng\04-工具\wulibs'
+$OUT = Join-Path $HERE 'build'
+# 版本可通过环境变量覆盖：WU_VC=386 WU_VN=3.8.6 WU_APK=...
+$VC = if ($env:WU_VC) { [int]$env:WU_VC } else { 637 }
+$VN = if ($env:WU_VN) { $env:WU_VN } else { '6.3.7' }
+$APKNAME = if ($env:WU_APK) { $env:WU_APK } else { "watch-unlock-$VN-signed.apk" }
 
 if (Test-Path $OUT) {
   try { Remove-Item $OUT -Recurse -Force -ErrorAction Stop }
@@ -57,46 +47,40 @@ if (Test-Path $OUT) {
 }
 New-Item -ItemType Directory -Force -Path $OUT, "$OUT\gen", "$OUT\classes", "$OUT\dex" | Out-Null
 
-# --- 依赖 ---
-$LIBS = @('api-13.1.5', 'provider-13.1.5', 'aidl-13.1.5', 'shared-13.1.5') |
-  ForEach-Object { Join-Path $LIB "$_-classes.jar" }
-
-$KADB = @()
-if (-not $NoKadb) {
-  $KADB = @('kadb-classes.jar', 'okio-jvm-3.9.1.jar', 'kotlin-stdlib-2.1.0-RC2.jar',
-    'kotlinx-coroutines-core-jvm-1.9.0.jar', 'bcprov-jdk18on-1.77.jar',
-    'bcpkix-jdk18on-1.77.jar', 'bcutil-jdk18on-1.77.jar',
-    'spake2-classes.jar', 'hiddenapibypass-classes.jar') |
-    ForEach-Object { Join-Path $LIB $_ }
-}
-
-$LIBS = $LIBS + $KADB
-foreach ($j in $LIBS) { if (-not (Test-Path $j)) { throw "缺少依赖 $j（见 libs/README.md）" } }
+# 依赖：Shizuku api/provider 及其 transitive 依赖
+$LIBS = @('api-13.1.5', 'provider-13.1.5', 'aidl-13.1.5', 'shared-13.1.5') | ForEach-Object { Join-Path $LIB "$_-classes.jar" }
+# 内置无线调试（Kadb）依赖。注意必须包含 bcutil，否则运行时缺 org.bouncycastle.asn1.cms 类
+$WULIBS = @('kadb-classes.jar', 'okio-jvm-3.9.1.jar', 'kotlin-stdlib-2.1.0-RC2.jar',
+  'kotlinx-coroutines-core-jvm-1.9.0.jar', 'bcprov-jdk18on-1.77.jar',
+  'bcpkix-jdk18on-1.77.jar', 'bcutil-jdk18on-1.77.jar',
+  'spake2-classes.jar', 'hiddenapibypass-classes.jar') |
+  ForEach-Object { Join-Path $WULIB $_ }
+$LIBS = $LIBS + $WULIBS
+foreach ($j in $LIBS) { if (-not (Test-Path $j)) { throw "缺少依赖 $j（见 build.ps1 顶部说明）" } }
 
 Write-Host '>>> aapt2 compile'
 & "$BT\aapt2.exe" compile --dir "$HERE\res" -o "$OUT\res.zip"
 if ($LASTEXITCODE -ne 0) { throw 'aapt2 compile 失败' }
 
 Write-Host '>>> aapt2 link'
-& "$BT\aapt2.exe" link -o "$OUT\base.apk" -I $AJAR --manifest "$HERE\AndroidManifest.xml" `
+# aapt2 的 --version-code/--version-name 在部分版本不会覆盖清单里的值，
+# 这里生成一份临时清单写入目标版本，保证产物版本号一定正确
+$MANIFEST = Join-Path $OUT 'AndroidManifest.xml'
+$mf = (Get-Content "$HERE\AndroidManifest.xml" -Raw)
+$mf = $mf -replace 'android:versionCode="[0-9]+"', "android:versionCode=`"$VC`""
+$mf = $mf -replace 'android:versionName="[^"]*"', "android:versionName=`"$VN`""
+[System.IO.File]::WriteAllText($MANIFEST, $mf, (New-Object System.Text.UTF8Encoding($false)))
+& "$BT\aapt2.exe" link -o "$OUT\base.apk" -I $AJAR --manifest $MANIFEST `
   -R "$OUT\res.zip" --java "$OUT\gen" --auto-add-overlay `
-  --min-sdk-version 26 --target-sdk-version 34 `
-  --version-code $VersionCode --version-name $VersionName
+  --min-sdk-version 26 --target-sdk-version 34
 if ($LASTEXITCODE -ne 0) { throw 'aapt2 link 失败' }
 
 Write-Host '>>> javac'
 $srcs = @(Get-ChildItem "$HERE\java" -Recurse -Filter *.java | ForEach-Object { $_.FullName })
 $srcs += (Get-ChildItem "$OUT\gen" -Recurse -Filter *.java | ForEach-Object { $_.FullName })
-
-# Kadb 的 jar 是 Java 21 字节码，javac 17 无法读取；编译期用 stub 替换，d8 阶段仍用真实 jar
-$CP = $LIBS | Where-Object { $_ -notlike '*kadb-classes.jar' }
-$stub = Join-Path $LIB 'kadb-stub.jar'
-if (-not $NoKadb) {
-  if (-not (Test-Path $stub)) { throw "缺少编译期 stub：$stub（见 libs/README.md）" }
-  $CP = $CP + $stub
-}
-$cp = ($CP -join ';') + ';' + $AJAR
-
+# Kadb 的 jar 是 Java 21 字节码，javac17 无法读取，编译期用 kadb-stub.jar 替换（d8 阶段仍用真实 jar）
+$CPLIBS = $LIBS | Where-Object { $_ -notlike '*kadb-classes.jar' }
+$cp = ($CPLIBS -join ';') + ';' + (Join-Path $WULIB 'kadb-stub.jar') + ';' + $AJAR
 & (Join-Path $JDK 'bin\javac.exe') -encoding UTF-8 --release 11 -nowarn `
   -classpath $cp -d "$OUT\classes" $srcs
 if ($LASTEXITCODE -ne 0) { throw 'javac 失败' }
@@ -126,25 +110,36 @@ Write-Host '>>> zipalign'
 & "$BT\zipalign.exe" -p -f 4 "$OUT\unsigned.apk" "$OUT\aligned.apk"
 if ($LASTEXITCODE -ne 0) { throw 'zipalign 失败' }
 
-$APKNAME = "watch-unlock-$VersionName.apk"
-if ($Unsigned -or -not $env:SMART_KS_PASS -or -not $Keystore) {
-  Write-Host '未提供签名参数（-Keystore / SMART_KS_PASS），输出未签名包：'
-  Copy-Item "$OUT\aligned.apk" "$OUT\$APKNAME" -Force
-  Write-Host "$OUT\$APKNAME"
+Write-Host '>>> 签名（正式密钥库）'
+# 正式包使用 key0 密钥库；口令不落盘，通过环境变量 SMART_KS_PASS 传入
+$KS = 'E:\keys\key0\smart unlock.jks'
+$KS_ALIAS = 'phone unlock'
+if (-not (Test-Path -LiteralPath $KS)) { throw "缺少密钥库：$KS" }
+if (-not $env:SMART_KS_PASS) {
+  Write-Host '未设置环境变量 SMART_KS_PASS（签名口令），仅生成未签名包：'
+  if ($ORIG_HERE -ne $HERE) {
+    New-Item -ItemType Directory -Force -Path $ORIG_OUT | Out-Null
+    Copy-Item "$OUT\aligned.apk" (Join-Path $ORIG_OUT 'aligned.apk') -Force
+    Write-Host (Join-Path $ORIG_OUT 'aligned.apk')
+  } else {
+    Write-Host "$OUT\aligned.apk"
+  }
   exit 0
 }
 
-if (-not (Test-Path -LiteralPath $Keystore)) { throw "缺少密钥库：$Keystore" }
-
-Write-Host '>>> 签名'
-& "$BT\apksigner.bat" sign --ks $Keystore --ks-pass 'env:SMART_KS_PASS' `
-  --key-pass 'env:SMART_KS_PASS' --ks-key-alias $KeyAlias `
+# v1 + v2 + v3 全部启用（v1 兼容 Android 6 及更早/部分国产 ROM 的校验路径）
+& "$BT\apksigner.bat" sign --ks $KS --ks-pass 'env:SMART_KS_PASS' `
+  --key-pass 'env:SMART_KS_PASS' --ks-key-alias $KS_ALIAS `
   --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true `
   --out "$OUT\$APKNAME" "$OUT\aligned.apk"
 if ($LASTEXITCODE -ne 0) { throw 'apksigner 失败（检查口令与别名）' }
-
-& "$BT\apksigner.bat" verify -v --print-certs "$OUT\$APKNAME" |
-  Select-String -Pattern 'Verified using|Signer #1 certificate DN|SHA-256 digest'
+& "$BT\apksigner.bat" verify -v --print-certs "$OUT\$APKNAME" | Select-String -Pattern 'Verified using|Signer #1 certificate DN|SHA-256 digest'
 
 Write-Host ''
-Write-Host "完成: $OUT\$APKNAME"
+if ($ORIG_HERE -ne $HERE) {
+  New-Item -ItemType Directory -Force -Path $ORIG_OUT | Out-Null
+  Copy-Item "$OUT\$APKNAME" (Join-Path $ORIG_OUT $APKNAME) -Force
+  Write-Host "完成: $(Join-Path $ORIG_OUT $APKNAME)"
+} else {
+  Write-Host "完成: $OUT\$APKNAME"
+}

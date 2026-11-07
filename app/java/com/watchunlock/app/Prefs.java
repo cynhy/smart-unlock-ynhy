@@ -68,11 +68,11 @@ public final class Prefs {
     }
 
     public static String pin(Context c) {
-        return sp(c).getString("pin", "");
+        return SecurePin.load(c);
     }
 
     public static void savePin(Context c, String v) {
-        sp(c).edit().putString("pin", v).apply();
+        SecurePin.save(c, v);
     }
 
     public static String rssi(Context c) {
@@ -152,6 +152,128 @@ public final class Prefs {
 
     public static void setMusicSwipe(Context c, boolean v) {
         sp(c).edit().putBoolean("music_swipe", v).apply();
+    }
+
+    /** 已添加的候选应用，换行分隔；与 music_app_pkg 的选中项分开保存 */
+    public static String musicApps(Context c) {
+        String v = sp(c).getString("music_apps", "");
+        return v == null ? "" : v;
+    }
+
+    public static void setMusicApps(Context c, String v) {
+        sp(c).edit().putString("music_apps", v == null ? "" : v).apply();
+    }
+
+    public static void addMusicApp(Context c, String pkg) {
+        String p = pkg == null ? "" : pkg.trim();
+        if (!p.matches("[A-Za-z0-9._]{1,200}")) return;
+        for (String s : musicApps(c).split("\n")) {
+            if (p.equals(s.trim())) return;
+        }
+        String cur = musicApps(c).trim();
+        setMusicApps(c, cur.isEmpty() ? p : cur + "\n" + p);
+    }
+
+    public static void removeMusicApp(Context c, String pkg) {
+        String p = pkg == null ? "" : pkg.trim();
+        StringBuilder sb = new StringBuilder();
+        for (String s : musicApps(c).split("\n")) {
+            String t = s.trim();
+            if (t.isEmpty() || t.equals(p)) continue;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(t);
+        }
+        setMusicApps(c, sb.toString());
+        if (p.equals(musicAppPkg(c))) setMusicAppPkg(c, "");
+    }
+
+    /** 亮屏时系统报告未锁屏（例如刚解锁或受信任设备生效），跳过本次注入 */
+    public static boolean skipWhenUnlocked(Context c) {
+        return sp(c).getBoolean("skip_when_unlocked", true);
+    }
+
+    public static void setSkipWhenUnlocked(Context c, boolean v) {
+        sp(c).edit().putBoolean("skip_when_unlocked", v).apply();
+    }
+
+    /** 无线调试配对成功后，尝试用内置 ADB 执行 Shizuku 的官方 start.sh */
+    public static boolean shizukuAutoStart(Context c) {
+        return sp(c).getBoolean("shizuku_auto_start", false);
+    }
+
+    public static void setShizukuAutoStart(Context c, boolean v) {
+        sp(c).edit().putBoolean("shizuku_auto_start", v).apply();
+    }
+
+    // ---------------------------------------------------------------- 增强防护
+
+    /** 增强防护总开关 */
+    public static boolean protectEnabled(Context c) {
+        return sp(c).getBoolean("protect_enabled", false);
+    }
+
+    public static void setProtectEnabled(Context c, boolean v) {
+        sp(c).edit().putBoolean("protect_enabled", v).apply();
+    }
+
+    /** 有 MAC 时禁止按名称回退（MAC 不匹配即视为不在线） */
+    public static boolean macStrict(Context c) {
+        return sp(c).getBoolean("mac_strict", true);
+    }
+
+    public static void setMacStrict(Context c, boolean v) {
+        sp(c).edit().putBoolean("mac_strict", v).apply();
+    }
+
+    /** MAC 不匹配时，允许在已匹配设备里找同名设备来解锁（身份不可靠） */
+    public static boolean macNameFallback(Context c) {
+        return sp(c).getBoolean("mac_name_fallback", false);
+    }
+
+    public static void setMacNameFallback(Context c, boolean v) {
+        sp(c).edit().putBoolean("mac_name_fallback", v).apply();
+    }
+
+    /** WiFi 绑定 BSSID，并要求非开放网络 */
+    public static boolean wifiBindBssid(Context c) {
+        return sp(c).getBoolean("wifi_bind_bssid", true);
+    }
+
+    public static void setWifiBindBssid(Context c, boolean v) {
+        sp(c).edit().putBoolean("wifi_bind_bssid", v).apply();
+    }
+
+    /** 允许开放（无密码）网络也满足 WiFi 条件 */
+    public static boolean wifiAllowOpen(Context c) {
+        return sp(c).getBoolean("wifi_allow_open", false);
+    }
+
+    public static void setWifiAllowOpen(Context c, boolean v) {
+        sp(c).edit().putBoolean("wifi_allow_open", v).apply();
+    }
+
+    /**
+     * 延长解锁（实验性）：在身边时临时关闭锁屏密码，断开后立即写回。
+     * 默认关闭；开启需要连续多级确认，且必须先在应用内校验系统 PIN。
+     */
+    public static boolean extendUnlock(Context c) {
+        return sp(c).getBoolean("extend_unlock", false);
+    }
+
+    public static void setExtendUnlock(Context c, boolean v) {
+        sp(c).edit().putBoolean("extend_unlock", v).apply();
+    }
+
+    /**
+     * 每次亮屏都现场查询设备状态（默认关闭）。
+     * 关闭时用蓝牙事件缓存，解锁更快；打开后每次多约 200~350ms，但缓存可能过期时更稳。
+     */
+    public static boolean presenceLive(Context c) {
+        return sp(c).getBoolean("presence_live", false);
+    }
+
+    public static void setPresenceLive(Context c, boolean v) {
+        sp(c).edit().putBoolean("presence_live", v).apply();
     }
 
     /** 无线调试（内置 ADB）主机与端口；主机默认本机回环 */
