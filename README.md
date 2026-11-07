@@ -105,7 +105,7 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 
 | 版本 | 下载 | 说明 |
 | --- | --- | --- |
-| 6.4.3 | `watch-unlock-6.4.3-signed.apk`（签名后上传） | **修复无线调试**（配对发现 / 连接端口 / 大按钮发送）+ Root 稳定性修复 + 网页版 ADB 两台手机流程；测试版，不承诺稳定 |
+| 6.4.3 | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | **修复无线调试**（配对发现 / 连接端口 / 大按钮发送）+ Root 稳定性修复 + 网页版 ADB 两台手机流程；测试版，不承诺稳定 |
 
 ### 全部已签名版本（历史 / 测试）
 

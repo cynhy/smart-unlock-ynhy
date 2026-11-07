@@ -102,7 +102,7 @@ The three are mutually exclusive; after switching, tap “Deploy & enable” aga
 
 | Version | Download | Notes |
 | --- | --- | --- |
-| 6.4.3 | `watch-unlock-6.4.3-signed.apk` (uploaded after signing) | **Wireless-debugging fixes** (pairing discovery / connect port / big send button) + Root stability + Web ADB two-phone flow; beta, no stability promise |
+| 6.4.3 | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | **Wireless-debugging fixes** (pairing discovery / connect port / big send button) + Root stability + Web ADB two-phone flow; beta, no stability promise |
 
 ### All signed builds (historical / test)
 
