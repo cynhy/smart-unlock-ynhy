@@ -5,8 +5,6 @@ import android.app.AlertDialog;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -14,7 +12,6 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -49,10 +46,6 @@ public class AdbActivity extends Activity {
     private static final int C_WARN_BG = 0xFFFFF7ED;
     private static final int C_WARN_TEXT = 0xFFC2410C;
 
-    /** 晨钟酱《搞机工具箱》Web 版（GPL-3.0）：仅作为外部入口，不打包进 APK */
-    private static final String WEB_ADB_URL = "https://czjam.github.io/gjgjxweb/";
-    private static final String WEB_ADB_REPO = "https://github.com/CzJam/gjgjxweb";
-
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService pool = Executors.newSingleThreadExecutor();
 
@@ -81,7 +74,7 @@ public class AdbActivity extends Activity {
         sv.addView(root, new LinearLayout.LayoutParams(-1, -2));
 
         TextView title = new TextView(this);
-        title.setText(I18n.t("无线调试（内置 ADB）", "Wireless debugging (built-in ADB)"));
+        title.setText(I18n.t("无线调试（内置官方 ADB）", "Wireless debugging (bundled official ADB)"));
         title.setTextSize(22);
         title.setTextColor(C_TEXT);
         title.getPaint().setFakeBoldText(true);
@@ -136,14 +129,19 @@ public class AdbActivity extends Activity {
                 "1. 点下面的「开发者选项」。系统会跳到开发者选项，并尽量把「无线调试」滚动到可见位置。\n"
                         + "2. 点「无线调试」这一行左侧进入子页面（右侧只是开关），把开关打开。\n"
                         + "3. 点「使用配对码配对设备」，保持这个弹窗打开；本应用会自动找到配对端口。\n"
-                        + "4. 下拉展开通知，点「输入配对码」并在通知里输入 6 位码；"
-                        + "不要点通知正文，也不要切到本应用页面，否则系统会关闭配对弹窗、配对码随之失效。\n"
+                        + "4. 输入配对码（二选一）：\n"
+                        + "   A. 下拉展开通知，点「输入配对码」在通知里输入 6 位码；不要点通知正文。\n"
+                        + "   B. 分屏：本应用和设置页各占一半屏幕，在下方「手动配对」里填配对端口和 6 位码，点「配对」。\n"
+                        + "注意：无论用哪种方式，都不要关闭系统配对弹窗，否则配对码会立即失效。\n"
                         + "提示：如果开发者选项里没有「无线调试」，说明开发者选项还没开启。",
                 "1. Tap Developer options below. Settings opens and tries to scroll Wireless debugging into view.\n"
                         + "2. Tap the left side of the Wireless debugging row to open the sub-page (the right side is only the switch). Turn it on.\n"
                         + "3. Tap “Pair device with pairing code” and keep the dialog open; this app finds the pairing port automatically.\n"
-                        + "4. Pull down and expand the notification, tap “Enter pairing code” and type the 6-digit code there. "
-                        + "Do not tap the notification body and do not switch to this app: the system closes the pairing dialog and the code becomes invalid.\n"
+                        + "4. Enter the pairing code in either way:\n"
+                        + "   A. Pull down the notification, tap “Enter pairing code” and type the 6-digit code there. Do not tap the body.\n"
+                        + "   B. Split screen: put this app and Settings side by side, then enter the pairing port and the 6-digit "
+                        + "code in “Manual pairing” below and tap Pair.\n"
+                        + "Note: never close the system pairing dialog, or the code expires immediately.\n"
                         + "Note: if Wireless debugging is missing, Developer options is not enabled yet.")));
         Button dev = button(I18n.t("开发者选项", "Developer options"));
         dev.setOnClickListener(v -> openWirelessDebugging());
@@ -189,21 +187,21 @@ public class AdbActivity extends Activity {
                         + "It only works on Shizuku builds that can be started by ADB; if the script is missing it skips "
                         + "silently — open Shizuku and use “Start via wireless debugging” instead. Wireless debugging "
                         + "turns off after a reboot, so you must pair again.")));
-        stepsCard.setVisibility(notificationsEnabled ? View.VISIBLE : View.GONE);
+        // 步骤卡片始终可见：没有通知权限时仍可用分屏 + 手动配对完成配对
         root.addView(stepsCard, gap(12));
 
         LinearLayout cfg = card();
         cfg.addView(sectionTitle(I18n.t("手动配对 / 连接（备用）", "Manual pairing / connection (fallback)")));
         cfg.addView(body(I18n.t(
-                "通知方式优先：下拉通知，点「输入配对码」，在通知里输入 6 位码；"
+                "方式一（通知）：下拉通知，点「输入配对码」，在通知里输入 6 位码；"
                         + "配对期间不要点通知正文，也不要离开系统配对弹窗。\n"
-                        + "手动方式仅在通知不可用时使用：从系统的「使用配对码配对设备」弹窗读取配对端口和 6 位配对码，"
-                        + "连接端口从无线调试主页面读取。离开弹窗后配对码通常立即失效，成功率很低。",
-                "Prefer the notification flow: pull down, tap “Enter pairing code” and type the 6-digit code in the notification; "
+                        + "方式二（分屏）：把本应用和设置页分屏显示，从系统的「使用配对码配对设备」弹窗读取配对端口和 6 位配对码，"
+                        + "连接端口从无线调试主页面读取，填好后点「配对」。两种方式都要保持配对弹窗打开。",
+                "Way 1 (notification): pull down, tap “Enter pairing code” and type the 6-digit code in the notification; "
                         + "do not tap the notification body and do not leave the system pairing dialog.\n"
-                        + "The manual fallback is only for when notifications are unavailable: read the pairing port and 6-digit "
-                        + "code from the system dialog, and the connect port from the Wireless debugging main screen. The code "
-                        + "usually expires as soon as the dialog is left, so this path is unreliable.")));
+                        + "Way 2 (split screen): show this app and Settings side by side, read the pairing port and 6-digit code "
+                        + "from the system dialog and the connect port from the Wireless debugging main screen, then tap Pair. "
+                        + "Keep the pairing dialog open in both ways.")));
 
         cfg.addView(label(I18n.t("主机（默认 127.0.0.1，即本机）", "Host (default 127.0.0.1, this device)")), gap(8));
         final EditText host = field(Prefs.adbHost(this), InputType.TYPE_CLASS_TEXT);
@@ -263,8 +261,6 @@ public class AdbActivity extends Activity {
         console.addView(out, gap(10));
         runCmd.setOnClickListener(v -> doExec(cmd, runCmd, out));
         root.addView(console, gap(12));
-
-        root.addView(buildWebAdbCard(), gap(12));
 
         setContentView(sv);
         refreshGuide();
@@ -356,9 +352,6 @@ public class AdbActivity extends Activity {
         notificationsEnabled = notificationsEnabled();
         if (notificationCard != null) {
             notificationCard.setVisibility(notificationsEnabled ? View.GONE : View.VISIBLE);
-        }
-        if (stepsCard != null) {
-            stepsCard.setVisibility(notificationsEnabled ? View.VISIBLE : View.GONE);
         }
         if (guideStatus == null) return;
         boolean dev = devOptionsEnabled();
@@ -554,117 +547,6 @@ public class AdbActivity extends Activity {
                         : I18n.t("连接失败：%s", "Connection failed: %s", AdbBridge.lastError()));
             });
         });
-    }
-
-    /**
-     * 网页版 ADB：不依赖本机回环端口，用浏览器 + WebUSB 直接调试安卓设备。
-     * 页面属于晨钟酱的《搞机工具箱》Web 版（GPL-3.0），这里只做入口与说明，不打包其代码。
-     */
-    private LinearLayout buildWebAdbCard() {
-        LinearLayout c = card();
-        c.addView(sectionTitle(I18n.t("网页版 ADB（USB，免回环端口）",
-                "Web ADB (USB, no loopback port)")));
-        c.addView(body(I18n.t(
-                "为什么需要它：谷歌可能进一步收紧「本机回环 ADB」（127.0.0.1）的配对与授权。"
-                        + "这个方式不走手机自己的 adbd 回环端口，而是用 WebUSB 把目标安卓设备直接连到另一台设备，"
-                        + "在浏览器里执行 ADB 命令，可作为无线调试失效时的备用通道。\n\n"
-                        + "归属与版本：网页由 晨钟酱（CzJam）所有并维护，版本 6.3.9，"
-                        + "属于开源项目《搞机工具箱》Web 版（GPL-3.0）。本应用只提供入口和使用说明，"
-                        + "没有内置该网页代码，也不控制其内容；版权与许可见项目仓库。\n\n"
-                        + "适用设备：主机可以是除 iOS 以外的任何设备——Windows、macOS、Linux、Android 平板或另一台手机，"
-                        + "只要浏览器基于 Chromium（Chrome / Edge / Brave / Opera 等）并支持 WebUSB；"
-                        + "被调试端必须是安卓设备。iOS 上的浏览器没有 WebUSB，不能用作主机；Firefox 也不支持 WebUSB。\n\n"
-                        + "使用步骤：\n"
-                        + "1. 目标安卓：开发者选项 → 打开「USB 调试」。\n"
-                        + "2. 连接数据线：电脑直连；手机作主机时用 OTG 转接头；两台手机用 C-to-C 数据线。\n"
-                        + "3. 在主机上用 Chrome / Edge 打开下面的网页（首次加载需要联网）。\n"
-                        + "4. 点网页里的「连接」，选择 USB 设备，并在目标手机上允许 USB 调试授权。\n"
-                        + "5. 在网页的 ADB 终端执行命令，例如查看设备信息、临时授权或部署脚本。\n\n"
-                        + "注意：这是外部网页，请从下面的官方地址打开；本应用本身仍不联网、不上传数据，"
-                        + "打开后由浏览器直接与设备通信。网页首次加载需要网络，之后能否离线使用取决于浏览器缓存。",
-                "Why: Google may further restrict pairing/authorization for local loopback ADB (127.0.0.1). "
-                        + "This path does not use the phone's own adbd loopback port. Instead, WebUSB connects the "
-                        + "target Android device directly to another device and runs ADB commands in a browser, "
-                        + "as a fallback when wireless debugging is unavailable.\n\n"
-                        + "Owner and version: the page is owned and maintained by 晨钟酱 (CzJam), version 6.3.9, "
-                        + "part of the open-source “搞机工具箱” Web edition (GPL-3.0). This app only provides an "
-                        + "entry point and instructions; it does not bundle the page or control its content. "
-                        + "Copyright and license are in the project repository.\n\n"
-                        + "Host devices: any device except iOS — Windows, macOS, Linux, Android tablets or another "
-                        + "phone — with a Chromium-based browser (Chrome / Edge / Brave / Opera, etc.) that supports "
-                        + "WebUSB. The device being debugged must be Android. iOS browsers have no WebUSB and cannot "
-                        + "be used as the host; Firefox does not support WebUSB either.\n\n"
-                        + "Steps:\n"
-                        + "1. On the target Android device: Developer options → enable “USB debugging”.\n"
-                        + "2. Connect a data cable: a computer directly; an OTG adapter when a phone is the host; "
-                        + "a C-to-C cable between two phones.\n"
-                        + "3. Open the page below in Chrome / Edge on the host (the first load needs network).\n"
-                        + "4. Tap “Connect” on the page, choose the USB device, and allow USB debugging on the target.\n"
-                        + "5. Run commands in the page's ADB terminal, e.g. read device info, grant temporary "
-                        + "permissions, or deploy a script.\n\n"
-                        + "Note: this is an external page; open it from the official address below. This app itself "
-                        + "still makes no network requests and uploads nothing; after opening, the browser talks to "
-                        + "the device directly. The first load needs the network; offline use depends on the "
-                        + "browser cache.")));
-        Button open = button(I18n.t("打开网页版搞机工具箱 6.3.9",
-                "Open the web toolbox 6.3.9"));
-        open.setOnClickListener(v -> openWebPage(WEB_ADB_URL, true));
-        c.addView(open, gap(10));
-        Button copy = button(I18n.t("复制网页地址", "Copy the page address"));
-        copy.setOnClickListener(v -> copyText(I18n.t("网页地址已复制", "Page address copied"), WEB_ADB_URL));
-        c.addView(copy, gap(6));
-        Button repo = button(I18n.t("查看晨钟酱的开源项目（GitHub）",
-                "View 晨钟酱's open-source project (GitHub)"));
-        repo.setOnClickListener(v -> openWebPage(WEB_ADB_REPO, false));
-        c.addView(repo, gap(6));
-        c.addView(notice(I18n.t(
-                "本项目与晨钟酱无隶属关系，仅致谢并链接其公开作品；网页的可用性、内容与数据安全由该网页自行负责。",
-                "This project is not affiliated with 晨钟酱; we thank and link to their public work. "
-                        + "The page's availability, content and data handling are its own responsibility."),
-                C_WARN_BG, C_WARN_TEXT), gap(10));
-        return c;
-    }
-
-    /** 优先拉起支持 WebUSB 的 Chromium 浏览器；找不到时交给系统选择器 */
-    private void openWebPage(String url, boolean needWebUsb) {
-        Uri uri = Uri.parse(url);
-        if (needWebUsb) {
-            String[] packages = {
-                    "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary",
-                    "com.microsoft.emmx", "com.brave.browser", "com.opera.browser", "com.vivaldi.browsers"
-            };
-            for (String pkg : packages) {
-                try {
-                    Intent i = new Intent(Intent.ACTION_VIEW, uri).setPackage(pkg);
-                    if (i.resolveActivity(getPackageManager()) != null) {
-                        startActivity(i);
-                        return;
-                    }
-                } catch (Throwable ignored) {
-                }
-            }
-            toast(I18n.t("未检测到 Chrome / Edge，请在系统选择器里选择支持 WebUSB 的 Chromium 浏览器",
-                    "Chrome / Edge not found; pick a Chromium browser that supports WebUSB in the chooser"));
-        }
-        try {
-            startActivity(Intent.createChooser(new Intent(Intent.ACTION_VIEW, uri),
-                    I18n.t("选择浏览器", "Choose a browser")));
-        } catch (Throwable t) {
-            toast(I18n.t("没有可用的浏览器，请手动访问：%s", "No browser available; open manually: %s", url));
-        }
-    }
-
-    private void copyText(String msg, String text) {
-        try {
-            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            if (cm != null) {
-                cm.setPrimaryClip(ClipData.newPlainText("webadb", text));
-                toast(msg);
-                return;
-            }
-        } catch (Throwable ignored) {
-        }
-        toast(I18n.t("复制失败，请手动输入：%s", "Copy failed; type it manually: %s", text));
     }
 
     private void refreshStatus() {

@@ -6,12 +6,12 @@ Use a paired Bluetooth device (watch / earbuds / band) as a key: while it is onl
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-2ea44f)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84)]()
 [![Stable](https://img.shields.io/badge/stable-1.1%20%7C%203.3.3%20%7C%206.3.6-1f6feb)]()
-[![Latest](https://img.shields.io/badge/latest-6.3.7%20beta-f59e0b)]()
+[![Latest](https://img.shields.io/badge/latest-6.3.9%20beta-f59e0b)]()
 
 [简体中文](README.md) | English
 
 > [!IMPORTANT]
-> **Only 1.1, 3.3.3 and 6.3.6 are marked stable.** Other signed builds are kept as historical / test releases. **6.3.7 is a beta** (its signed package will be published after testing); it focuses on Root stability and adds a “Web ADB” fallback. Unsigned APKs are never uploaded to Releases.
+> **Only 1.1, 3.3.3 and 6.3.6 are marked stable.** Other signed builds are kept as historical / test releases. **6.3.9 is a beta** (versionCode 639, the final build of 6.3.7); it keeps the rewritten official-ADB wireless-debugging engine, Root stability fixes and the “Web ADB” fallback. **6.3.7 was never published** — use 6.3.9. Unsigned APKs are never uploaded to Releases.
 
 ## What it does
 
@@ -23,7 +23,11 @@ Smart Unlock treats “a paired Bluetooth device is online” as an unlock condi
 | **Root** | Device rooted, `su` grants the app | Root access must be “Apps and ADB”; much more stable in 6.3.7 |
 | **Wireless debugging** | Android 11+, enable “Wireless debugging” manually | Turns off after reboot and the port changes; pair again |
 
-## 6.3.7 (beta)
+## 6.3.9 (beta)
+
+### Wireless-debugging engine (official ADB since 6.3.7, kept in 6.3.9)
+
+The built-in wireless debugging no longer uses the third-party Kadb engine. Since 6.3.7 the app bundles the **official AOSP adb client** (Termux android-tools 37.0.0p1 build, Apache-2.0) and runs `adb pair` / `adb connect` / `adb shell` / `adb push` as its own uid: `libadb.so` is shipped in `lib/arm64-v8a/`, its dependencies are unzipped from `assets/adb-libs.zip` into app-private storage on first use. Pairing is unchanged: enter the 6-digit code in the notification, or use split screen with “Manual pairing”.
 
 ### Root stability
 
@@ -63,7 +67,7 @@ See [docs/网页版ADB-使用说明.md](docs/网页版ADB-使用说明.md) (Chin
 
 | Version | File | Notes |
 | --- | --- | --- |
-| 6.3.7 | `watch-unlock-6.3.7-signed.apk` (uploaded after signing) | Root fixes + Web ADB; beta |
+| 6.3.9 | `watch-unlock-6.3.9-signed.apk` (uploaded after signing) | Official-ADB wireless debugging + Root fixes + Web ADB; beta |
 
 ### All signed builds
 
@@ -82,13 +86,13 @@ See [docs/网页版ADB-使用说明.md](docs/网页版ADB-使用说明.md) (Chin
 
 ## Quick start
 
-1. Install 6.3.6 (stable) or 6.3.7 (beta).
+1. Install 6.3.6 (stable) or 6.3.9 (beta).
 2. Settings → Engine → choose Shizuku (recommended) / Root / Wireless debugging, and authorize.
 3. Pair the Bluetooth device in system settings, tap “Rescan” in the app, and tick it.
 4. Enter the same 4–16 digit PIN as the system lock screen.
 5. Tap “Deploy & enable” and test by locking and waking the screen.
 
-Full guide: [docs/使用说明-6.3.7.md](docs/使用说明-6.3.7.md) (Chinese).
+Full guide: [docs/使用说明.md](docs/使用说明.md) (Chinese).
 
 ## Build
 
@@ -96,13 +100,13 @@ Source lives in [`app/`](app). No Gradle; the build uses `aapt2 → javac → d8
 
 ```powershell
 Remove-Item Env:SMART_KS_PASS -ErrorAction SilentlyContinue
-$env:WU_VC=637
-$env:WU_VN='6.3.7'
+$env:WU_VC=639
+$env:WU_VN='6.3.9'
 powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 ```
 
 - Output: `app\build\aligned.apk` (unsigned);
-- Set `SMART_KS_PASS` to produce `watch-unlock-6.3.7-signed.apk` (override with `WU_APK`);
+- Set `SMART_KS_PASS` to produce `watch-unlock-6.3.9-signed.apk` (override with `WU_APK`);
 - Non-ASCII source paths are mirrored to `%TEMP%\watch-unlock-build` automatically;
 - Dependency jars are not committed; see [`libs/README.md`](libs/README.md).
 
@@ -120,7 +124,7 @@ Android 8.0+ (minSdk 26, targetSdk 34). Shizuku and Root paths have been verifie
 
 ## Third-party licenses
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Main components: Shizuku API, Kadb, Bouncy Castle, Okio, Kotlin, kotlinx-coroutines (Apache-2.0 / MIT-style), and the **“搞机工具箱” Web edition 6.3.9** by 晨钟酱 (CzJam, **GPL-3.0**, linked only, not bundled).
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Main components: Shizuku API, Android Debug Bridge / adb (AOSP) and the Termux android-tools build with its dependency libraries (Apache-2.0 / BSD-style), and the **“搞机工具箱” Web edition 6.3.9** by 晨钟酱 (CzJam, **GPL-3.0**, linked only, not bundled).
 
 ## License
 

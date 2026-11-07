@@ -101,9 +101,15 @@ public class SettingsActivity extends Activity {
         final RadioButton rRoot = radio(I18n.t("Root（需设备已 root）", "Root (device must be rooted)"));
         final RadioButton rAdb = radio(I18n.t("无线调试（内置 ADB，免 root）",
                 "Wireless debugging (built-in ADB, no root)"));
+        // 第 4 项只是「外部工具入口」，不是新的授权引擎：点它会进说明页，不改当前授权方式
+        final RadioButton rWeb = radio(I18n.t("网页版 ADB（USB，免回环端口）  ›",
+                "Web ADB (USB, no loopback port)  ›"));
+        rWeb.setTextColor(C_PRIMARY);
+        rWeb.setPadding(0, dp(10), 0, dp(6));
         rg.addView(rShizuku);
         rg.addView(rRoot);
         rg.addView(rAdb);
+        rg.addView(rWeb);
 
         String mode = Prefs.privilegeMode(this);
         rg.check("root".equals(mode) ? rRoot.getId()
@@ -136,7 +142,18 @@ public class SettingsActivity extends Activity {
             });
         });
 
+        final boolean[] restoringWeb = {false};
         rg.setOnCheckedChangeListener((g, id) -> {
+            if (id == rWeb.getId()) {
+                // 网页版 ADB 只是入口：立即把选中状态恢复到当前授权引擎，再打开说明页
+                restoringWeb[0] = true;
+                rg.check("root".equals(Prefs.privilegeMode(this)) ? rRoot.getId()
+                        : "adb".equals(Prefs.privilegeMode(this)) ? rAdb.getId() : rShizuku.getId());
+                restoringWeb[0] = false;
+                startActivity(new Intent(this, WebAdbActivity.class));
+                return;
+            }
+            if (restoringWeb[0]) return;
             String m = id == rRoot.getId() ? Privilege.ROOT
                     : id == rAdb.getId() ? Privilege.ADB : Privilege.SHIZUKU;
             Prefs.setPrivilegeMode(this, m);
@@ -159,6 +176,17 @@ public class SettingsActivity extends Activity {
         });
 
         c.addView(rg);
+        // 第 4 项的注释：说明它是「备用入口」，不是授权方式
+        TextView webNote = hint(I18n.t(
+                "注：第 4 项「网页版 ADB」不是授权引擎，不会改变上面的选择。"
+                        + "它只是打开一个说明页，再用浏览器 + USB 数据线调试安卓设备（主机可用除 iOS 外的设备），"
+                        + "用于本机回环 ADB 被收紧时的备用通道；点进去后按页面说明操作即可。",
+                "Note: option 4 “Web ADB” is not a privilege engine and does not change the selection above. "
+                        + "It only opens an instructions page and then debugs an Android device over USB from a browser "
+                        + "(the host can be any non-iOS device), as a fallback when local loopback ADB is restricted. "
+                        + "Tap it and follow the page."));
+        webNote.setTextColor(C_PRIMARY);
+        c.addView(webNote, gap(6));
         c.addView(adbHint, gap(8));
         adbSetup.setOnClickListener(v -> startActivity(new Intent(this, AdbActivity.class)));
         c.addView(adbSetup, gap(10));

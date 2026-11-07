@@ -1,10 +1,11 @@
 ﻿# 手工构建 APK（无 Gradle）：aapt2 -> javac -> d8 -> zipalign -> apksigner
 # 用法：powershell -ExecutionPolicy Bypass -File app\build.ps1
-# 依赖：Shizuku api/provider + Kadb(内置无线调试) 及其运行库，见 04-工具\wulibs
+# 依赖：Shizuku api/provider；内置无线调试改用打包的官方 adb 二进制
+# （jniLibs\arm64-v8a\libadb.so + assets\adb-libs.zip，见 LocalAdb.java）
 $ErrorActionPreference = 'Stop'
 
 $SDK = 'D:\shengchanli\sdk'
-# build-tools 34 的 d8 无法处理 Kadb 的 Java 21 class（major 65），必须用 36
+# 使用 build-tools 36（d8 需要能处理高版本字节码）
 $BT = Join-Path $SDK 'build-tools\36.0.0'
 $AJAR = Join-Path $SDK 'platforms\android-34\android.jar'
 $JDK = 'D:\shengchanli\jdk17.0.21_0'
@@ -25,17 +26,17 @@ if ($HERE -match '[^\x00-\x7F]') {
   New-Item -ItemType Directory -Force -Path $STAGE | Out-Null
   Copy-Item "$HERE\res" $STAGE -Recurse -Force
   Copy-Item "$HERE\assets" $STAGE -Recurse -Force
+  if (Test-Path "$HERE\jniLibs") { Copy-Item "$HERE\jniLibs" $STAGE -Recurse -Force }
   Copy-Item "$HERE\java" $STAGE -Recurse -Force
   Copy-Item "$HERE\AndroidManifest.xml" $STAGE -Force
   $HERE = $STAGE
   Write-Host ">>> 路径含中文，已镜像到 $STAGE"
 }
 $LIB = Join-Path $ORIG_HERE 'libs'
-$WULIB = 'E:\guocheng\04-工具\wulibs'
 $OUT = Join-Path $HERE 'build'
 # 版本可通过环境变量覆盖：WU_VC=386 WU_VN=3.8.6 WU_APK=...
-$VC = if ($env:WU_VC) { [int]$env:WU_VC } else { 637 }
-$VN = if ($env:WU_VN) { $env:WU_VN } else { '6.3.7' }
+$VC = if ($env:WU_VC) { [int]$env:WU_VC } else { 639 }
+$VN = if ($env:WU_VN) { $env:WU_VN } else { '6.3.9' }
 $APKNAME = if ($env:WU_APK) { $env:WU_APK } else { "watch-unlock-$VN-signed.apk" }
 
 if (Test-Path $OUT) {
@@ -49,13 +50,6 @@ New-Item -ItemType Directory -Force -Path $OUT, "$OUT\gen", "$OUT\classes", "$OU
 
 # 依赖：Shizuku api/provider 及其 transitive 依赖
 $LIBS = @('api-13.1.5', 'provider-13.1.5', 'aidl-13.1.5', 'shared-13.1.5') | ForEach-Object { Join-Path $LIB "$_-classes.jar" }
-# 内置无线调试（Kadb）依赖。注意必须包含 bcutil，否则运行时缺 org.bouncycastle.asn1.cms 类
-$WULIBS = @('kadb-classes.jar', 'okio-jvm-3.9.1.jar', 'kotlin-stdlib-2.1.0-RC2.jar',
-  'kotlinx-coroutines-core-jvm-1.9.0.jar', 'bcprov-jdk18on-1.77.jar',
-  'bcpkix-jdk18on-1.77.jar', 'bcutil-jdk18on-1.77.jar',
-  'spake2-classes.jar', 'hiddenapibypass-classes.jar') |
-  ForEach-Object { Join-Path $WULIB $_ }
-$LIBS = $LIBS + $WULIBS
 foreach ($j in $LIBS) { if (-not (Test-Path $j)) { throw "缺少依赖 $j（见 build.ps1 顶部说明）" } }
 
 Write-Host '>>> aapt2 compile'
@@ -78,9 +72,7 @@ if ($LASTEXITCODE -ne 0) { throw 'aapt2 link 失败' }
 Write-Host '>>> javac'
 $srcs = @(Get-ChildItem "$HERE\java" -Recurse -Filter *.java | ForEach-Object { $_.FullName })
 $srcs += (Get-ChildItem "$OUT\gen" -Recurse -Filter *.java | ForEach-Object { $_.FullName })
-# Kadb 的 jar 是 Java 21 字节码，javac17 无法读取，编译期用 kadb-stub.jar 替换（d8 阶段仍用真实 jar）
-$CPLIBS = $LIBS | Where-Object { $_ -notlike '*kadb-classes.jar' }
-$cp = ($CPLIBS -join ';') + ';' + (Join-Path $WULIB 'kadb-stub.jar') + ';' + $AJAR
+$cp = ($LIBS -join ';') + ';' + $AJAR
 & (Join-Path $JDK 'bin\javac.exe') -encoding UTF-8 --release 11 -nowarn `
   -classpath $cp -d "$OUT\classes" $srcs
 if ($LASTEXITCODE -ne 0) { throw 'javac 失败' }
@@ -97,10 +89,15 @@ $zip = [System.IO.Compression.ZipFile]::Open("$OUT\unsigned.apk", 'Update')
 $entries = @{}
 foreach ($dx in (Get-ChildItem "$OUT\dex" -Filter *.dex)) { $entries[$dx.Name] = $dx.FullName }
 foreach ($e in (Get-ChildItem "$HERE\assets" -File)) { $entries["assets/$($e.Name)"] = $e.FullName }
+# 内置 adb 可执行文件必须落在 lib/<abi>/ 下，安装时才会解压到 nativeLibraryDir
+$ADB_SO = Join-Path $HERE 'jniLibs\arm64-v8a\libadb.so'
+if (Test-Path $ADB_SO) { $entries['lib/arm64-v8a/libadb.so'] = $ADB_SO }
 foreach ($name in $entries.Keys) {
   $old = $zip.Entries | Where-Object { $_.FullName -eq $name }
   if ($old) { $old.Delete() }
-  $entry = $zip.CreateEntry($name, [System.IO.Compression.CompressionLevel]::Optimal)
+  $level = if ($name.EndsWith('.so')) { [System.IO.Compression.CompressionLevel]::NoCompression }
+           else { [System.IO.Compression.CompressionLevel]::Optimal }
+  $entry = $zip.CreateEntry($name, $level)
   $s = $entry.Open(); $fs = [System.IO.File]::OpenRead($entries[$name])
   $fs.CopyTo($s); $fs.Close(); $s.Close()
 }

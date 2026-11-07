@@ -13,19 +13,15 @@
 | `aidl-13.1.5-classes.jar` | `dev.rikka.shizuku:aidl:13.1.5` |
 | `shared-13.1.5-classes.jar` | `dev.rikka.shizuku:shared:13.1.5` |
 
-## 内置无线调试（可选，仅 2.0+ 需要）
+## 内置无线调试（adb 二进制，6.3.7 起）
 
-| 文件 | 来源 |
+内置无线调试不再依赖 jar，改为打包官方 adb 客户端：
+
+| 文件 | 内容 |
 | --- | --- |
-| `kadb-classes.jar` | `com.flyfishxu:kadb-android:1.2.1`（解压 AAR 取 classes.jar） |
-| `okio-jvm-3.9.1.jar` | `com.squareup.okio:okio-jvm:3.9.1` |
-| `kotlin-stdlib-2.1.0-RC2.jar` | `org.jetbrains.kotlin:kotlin-stdlib:2.1.0-RC2` |
-| `kotlinx-coroutines-core-jvm-1.9.0.jar` | `org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.9.0` |
-| `bcprov-jdk18on-1.77.jar` | `org.bouncycastle:bcprov-jdk18on:1.77` |
-| `bcpkix-jdk18on-1.77.jar` | `org.bouncycastle:bcpkix-jdk18on:1.77` |
-| `bcutil-jdk18on-1.77.jar` | `org.bouncycastle:bcutil-jdk18on:1.77`（必需，缺它会在配对时报 `NoClassDefFoundError`） |
-| `spake2-classes.jar` | `com.flyfishxu:spake2-android:0.0.5` |
-| `hiddenapibypass-classes.jar` | `com.flyfishxu:hiddenapibypass:4.3` |
-| `kadb-stub.jar` | 仅用于编译期（Kadb 是 Java 21 字节码，javac 17 无法读取），见 `scripts/make-kadb-stub.ps1` |
+| `app/jniLibs/arm64-v8a/libadb.so` | adb 可执行文件，来自 Termux `android-tools_37.0.0p1-3_aarch64.deb` 的 `data/data/com.termux/files/usr/bin/adb` |
+| `app/assets/adb-libs.zip` | adb 的依赖库（Abseil、Protobuf、Brotli、fmt、libc++、LZ4、PCRE2、zstd、zlib 等），**文件名必须保持 soname**，例如 `libz.so.1` |
 
-如果不打算使用内置无线调试，可以在 `app/build.ps1` 里加 `-NoKadb`，只编译 Shizuku/Root 两档。
+获取方式：从 Termux 仓库（<https://packages.termux.dev/apt/termux-main/pool/main/a/android-tools/>）下载 aarch64 的 `.deb` 解包；再按 `readelf -d adb` 里列出的 `NEEDED` 逐项下载对应依赖包。也可以直接从本项目已发布的源码包里取这两个文件。
+
+注意：目前只打包 arm64-v8a（aarch64）。armeabi-v7a / x86_64 需要各自的 Termux 构建与依赖，未做适配。

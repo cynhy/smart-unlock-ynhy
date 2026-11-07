@@ -8,16 +8,16 @@
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-2ea44f)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84)]()
 [![Stable](https://img.shields.io/badge/stable-1.1%20%7C%203.3.3%20%7C%206.3.6-1f6feb)]()
-[![Latest](https://img.shields.io/badge/latest-6.3.7%20beta-f59e0b)]()
+[![Latest](https://img.shields.io/badge/latest-6.3.9%20beta-f59e0b)]()
 
-[下载](#下载) · [快速开始](#快速开始) · [网页版 ADB](#网页版-adb免回环端口) · [使用手册](docs/使用说明-6.3.7.md) · [常见问题](#常见问题)
+[下载](#下载) · [快速开始](#快速开始) · [网页版 ADB](#网页版-adb免回环端口) · [使用手册](docs/使用说明.md) · [常见问题](#常见问题)
 
 </div>
 
 ---
 
 > [!IMPORTANT]
-> **稳定版只有 1.1、3.3.3、6.3.6。** 其余已签名版本都会保留，但只作为历史 / 测试版提供，不承诺同等稳定性。**6.3.7 是测试版**（正式签名包待测试完成后发布）；它主要修 Root 稳定性并新增「网页版 ADB」备用通道。
+> **稳定版只有 1.1、3.3.3、6.3.6。** 其余已签名版本都会保留，但只作为历史 / 测试版提供，不承诺同等稳定性。**6.3.9 是测试版**（versionCode 639，是 6.3.7 的定版），沿用重写后的官方 ADB 无线调试内核，并包含 Root 稳定性修复与「网页版 ADB」备用通道；**6.3.7 未发布**，请直接用 6.3.9。
 >
 > **未签名 APK 不会上传到任何 Release。** 仓库只收录源码与文档；Release 中只放已签名包。
 
@@ -37,11 +37,21 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 - 对安全性要求极高、不能接受 shell 权限的用户；
 - 需要「设备离开就立刻锁屏」的强安全场景（本项目只负责解锁，不负责锁屏）。
 
-## 6.3.7 更新（测试版）
+## 6.3.9 更新（测试版）
+
+### 无线调试内核重写（6.3.7 起，6.3.9 沿用）
+
+内置无线调试原本依赖第三方 Kadb 内核；6.3.7 起换成随包打包的**官方 AOSP adb 客户端**（Termux android-tools 37.0.0p1 构建，Apache-2.0），6.3.9 沿用同一实现：
+
+- 可执行文件 `libadb.so` 放在 `lib/arm64-v8a/`，安装后由系统解压到 `nativeLibraryDir`；
+- 依赖库放在 `assets/adb-libs.zip`，首次使用时解压到应用私有目录并设为只读；
+- 以应用自身 uid 执行 `adb pair` / `adb connect` / `adb shell` / `adb push`，不依赖 Shizuku；
+- 配对入口不变：通知输入 6 位配对码，或分屏 +「手动配对」；
+- APK 不再包含 Kadb / Kotlin / Bouncy Castle / Okio。
 
 ### Root 通道稳定性修复
 
-| 问题 | 6.3.6 及以前 | 6.3.7 |
+| 问题 | 6.3.6 及以前 | 6.3.9 |
 | --- | --- | --- |
 | 每次操作都重新拉起 `su` | 亮屏解锁 / 状态刷新都要等 su 启动，偶发超时 | 复用一条常驻 `su` 交互 shell |
 | 并发命令互相覆盖 | 三个调用共用 `wu-root.sh`，内容可能被截断 | 每条命令写入唯一脚本文件 |
@@ -52,7 +62,7 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 
 ### 新增网页版 ADB（备用通道）
 
-为应对谷歌可能收紧「本机回环 ADB」（`127.0.0.1`）的风险，无线调试页最下方新增 **网页版 ADB** 入口：
+为应对谷歌可能收紧「本机回环 ADB」（`127.0.0.1`）的风险，设置页「授权方式」新增第 4 项 **网页版 ADB**（仅备用入口，不改变当前授权方式；点进去先看说明页）：
 
 - 不依赖手机自己的 adbd 回环端口，改用 **WebUSB** 直连安卓设备；
 - 主机可以是 **除 iOS 以外的任何设备**（Windows / macOS / Linux / Android 平板或另一台手机）；
@@ -85,11 +95,11 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 | **3.3.3** | [watch-unlock-3.3.3-official.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v3.3.3/watch-unlock-3.3.3-official.apk) | 基础功能稳定版 |
 | **6.3.6** | [watch-unlock-6.3.6-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.3.6/watch-unlock-6.3.6-signed.apk) | **当前推荐稳定版**，修复 MAC 解析与配对通知问题 |
 
-### 6.3.7 测试版
+### 6.3.9 测试版
 
 | 版本 | 下载 | 说明 |
 | --- | --- | --- |
-| 6.3.7 | `watch-unlock-6.3.7-signed.apk`（签名后上传） | Root 稳定性修复 + 网页版 ADB；测试版，不承诺稳定 |
+| 6.3.9 | `watch-unlock-6.3.9-signed.apk`（签名后上传） | 官方 ADB 无线调试内核 + Root 稳定性修复 + 网页版 ADB；测试版，不承诺稳定 |
 
 ### 全部已签名版本（历史 / 测试）
 
@@ -109,13 +119,13 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 
 ## 快速开始
 
-1. **安装**：优先选 6.3.6 稳定版；想试 Root 修复或网页版 ADB 再装 6.3.7。
+1. **安装**：优先选 6.3.6 稳定版；想试官方 ADB 无线调试、Root 修复或网页版 ADB 再装 6.3.9。
 2. **授权**：设置 → 授权方式 → Shizuku（推荐）/ Root / 无线调试，按页面提示完成授权。
 3. **配对设备**：先让手表 / 耳机在系统蓝牙里配对，回到应用点「重新扫描」，勾选设备。
 4. **填 PIN**：输入与系统锁屏一致的 4～16 位数字。
 5. **部署并启用**：回主页点「部署并启用」，锁屏后亮屏测试。
 
-更完整的步骤、可选项与故障排查见 **[使用说明 6.3.7](docs/使用说明-6.3.7.md)**。
+更完整的步骤、可选项与故障排查见 **[使用说明 6.3.9](docs/使用说明.md)**。
 
 ## 网页版 ADB（免回环端口）
 
@@ -174,13 +184,13 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 
 ```powershell
 Remove-Item Env:SMART_KS_PASS -ErrorAction SilentlyContinue   # 不设口令 = 只出未签名包
-$env:WU_VC=637
-$env:WU_VN='6.3.7'
+$env:WU_VC=639
+$env:WU_VN='6.3.9'
 powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 ```
 
 - 输出：`app\build\aligned.apk`（未签名）；
-- 设置 `SMART_KS_PASS`（正式签名口令）后输出 `watch-unlock-6.3.7-signed.apk`（可用 `WU_APK` 改名）；
+- 设置 `SMART_KS_PASS`（正式签名口令）后输出 `watch-unlock-6.3.9-signed.apk`（可用 `WU_APK` 改名）；
 - 源码放在中文路径下也能构建：脚本会自动镜像到 `%TEMP%\watch-unlock-build`，产物复制回 `app\build`；
 - 依赖 jar 不随仓库提交，请按 [`libs/README.md`](libs/README.md) 自行放入 `app/libs`。
 
@@ -188,7 +198,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 
 ```powershell
 apksigner sign --ks <你的密钥库> --ks-pass pass:<口令> `
-  --out watch-unlock-6.3.7-signed.apk app\build\aligned.apk
+  --out watch-unlock-6.3.9-signed.apk app\build\aligned.apk
 ```
 
 ## 目录
@@ -199,7 +209,9 @@ app/                       Android 源码（Java + 手写布局）
   java/com/watchunlock/app 应用代码
 docs/                     使用说明、网页版 ADB、历史教程
 releases/                 各版本发布说明
-libs/                     依赖 jar 的获取说明（二进制不入库）
+libs/                     依赖与内置 adb 的获取说明（jar 不入库）
+app/jniLibs/              内置 adb 可执行文件（libadb.so）
+app/assets/adb-libs.zip   内置 adb 的依赖库
 ```
 
 ## 常见问题
@@ -211,13 +223,13 @@ libs/                     依赖 jar 的获取说明（二进制不入库）
 | 改设置不生效 | 6.3 起热重载；若提示「未写入守护」，点「部署并启用」 |
 | 重启后失效 | 守护随重启消失；重启 Shizuku 或重新配对无线调试后部署 |
 | 小米 / 澎湃通知没有输入框 | 通知样式切换为「原生样式」 |
-| 无线调试配对失败 | 保持系统配对弹窗打开；下拉通知点「输入配对码」，不要点正文、不要切走 |
-| Root 刚点允许仍不可用 | 6.3.7 首次等 15 秒；再点「检测 Root 授权」；确认 Root access 为「Apps and ADB」 |
+| 无线调试配对失败 | 保持系统配对弹窗打开；下拉通知点「输入配对码」，或分屏后在「手动配对」里填配对端口 + 6 位码；不要关闭弹窗 |
+| Root 刚点允许仍不可用 | 6.3.7 起首次等 15 秒；再点「检测 Root 授权」；确认 Root access 为「Apps and ADB」 |
 | 网页版 ADB 连不上 | 换 Chrome / Edge；换数据线 / OTG；目标端确认 USB 调试与 RSA；iOS / Firefox 不行 |
 | 延长解锁后指纹失效 | 预期行为，恢复密码后重新录入 |
 | 连续失败后停用 | 多半是系统 PIN 变了，改成新 PIN 后重新部署 |
 
-更多见 [使用说明 §7](docs/使用说明-6.3.7.md#7-常见问题)。
+更多见 [使用说明 §7](docs/使用说明.md#7-常见问题)。
 
 ## 安全与隐私
 
@@ -233,10 +245,9 @@ libs/                     依赖 jar 的获取说明（二进制不入库）
 本项目以 **BSD-3-Clause** 发布，见 [LICENSE](LICENSE)。使用的第三方组件、许可证与版权声明见 **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**，主要包括：
 
 - Shizuku / Shizuku API（Apache-2.0）——授权与 shell 执行；
-- Kadb（Apache-2.0）——无线调试 / ADB 协议参考；
-- Bouncy Castle（MIT）——SPAKE2 配对；
-- Okio、Kotlin、kotlinx-coroutines（Apache-2.0）；
-- hiddenapibypass、spake2——各自上游协议；
+- Android Debug Bridge / adb（AOSP，Apache-2.0）——内置无线调试客户端；
+- Termux android-tools 37.0.0p1 构建（Apache-2.0）——adb 二进制来源；
+- Abseil、Protobuf、Brotli、fmt、LZ4、PCRE2（Apache-2.0），zstd、zlib（BSD 式许可）——adb 依赖库；
 - **《搞机工具箱》Web 版 6.3.9**（晨钟酱 / CzJam，**GPL-3.0**）——网页版 ADB 链接的外部页面，**仅链接，未打包、未修改**。
 
 特别感谢晨钟酱公开的《搞机工具箱》Web 版，为本项目提供了免回环 ADB 的备用思路与现成页面。
@@ -244,7 +255,7 @@ libs/                     依赖 jar 的获取说明（二进制不入库）
 ## 致谢
 
 - Shizuku / 香草（RikkaApps）
-- Kadb / ADBeesh 等无线调试社区实现
+- AOSP adb、Termux android-tools，以及 LADB 等无线调试社区实现
 - 晨钟酱（CzJam）——《搞机工具箱》Web 版
 - 所有提交日志、Issue 和测试反馈的朋友
 

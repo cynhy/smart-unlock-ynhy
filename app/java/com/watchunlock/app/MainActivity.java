@@ -259,7 +259,14 @@ public class MainActivity extends Activity {
         pTitle.setTextSize(14);
         pTitle.setTextColor(C_TEXT);
         pTitle.getPaint().setFakeBoldText(true);
-        protect.addView(pTitle);
+        LinearLayout pHead = row();
+        pHead.addView(pTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView pArrow = new TextView(this);
+        pArrow.setText("›");
+        pArrow.setTextSize(18);
+        pArrow.setTextColor(C_PRIMARY);
+        pHead.addView(pArrow);
+        protect.addView(pHead);
         swProtect = new Switch(this);
         swProtect.setText(I18n.t("总开关", "Master"));
         swProtect.setTextSize(11);
@@ -278,6 +285,12 @@ public class MainActivity extends Activity {
         tvProtect.setTextSize(10);
         tvProtect.setTextColor(C_SUB);
         protect.addView(tvProtect, lpSw);
+        // 明确告诉用户这张卡可以点进去改，不要只靠「未开启 · 点此设置」这种状态文案
+        TextView pOpen = new TextView(this);
+        pOpen.setText(I18n.t("点击进入修改 ›", "Tap to edit ›"));
+        pOpen.setTextSize(11);
+        pOpen.setTextColor(C_PRIMARY);
+        protect.addView(pOpen, lpSw);
         refreshProtectCard();
         LinearLayout.LayoutParams lpP = new LinearLayout.LayoutParams(0, -2, 1f);
         lpP.leftMargin = dp(8);
@@ -543,12 +556,12 @@ public class MainActivity extends Activity {
         // 无线调试入口（页面最底部）
         LinearLayout adbCard = card();
         adbCard.addView(sectionTitle(I18n.t("无线调试", "Wireless debugging")));
-        adbCard.addView(hint(I18n.t("进入后可输入 adb 命令直接执行。使用前请先到「本应用 → 设置 → 无线调试」"
-                        + "完成配对与连接。若谷歌收紧本机回环 ADB 导致配对失效，同一页底部提供"
-                        + "「网页版 ADB」入口：用 USB + 浏览器直接调试安卓设备，不需要回环端口。",
+        adbCard.addView(hint(I18n.t("进入后可输入 adb 命令直接执行。使用前请先到「设置 → 授权方式 → 无线调试」"
+                        + "完成配对与连接。若本机回环 ADB 被限制，可在同一处选择第 4 项「网页版 ADB」"
+                        + "作为备用通道（用 USB + 浏览器直接调试安卓设备，不需要回环端口）。",
                 "Type and run adb commands inside. Complete pairing and connection in "
-                        + "Settings → Wireless debugging first. If Google restricts local loopback ADB and pairing "
-                        + "stops working, the same page offers “Web ADB”: debug an Android device directly over "
+                        + "Settings → Privilege → Wireless debugging first. If local loopback ADB is restricted, "
+                        + "pick option 4 “Web ADB” there as a fallback: debug an Android device directly over "
                         + "USB in a browser, with no loopback port.")));
         Button adbOpen = primaryButton(I18n.t("无线 ADB 调试", "Wireless ADB debugging"), 0xFF374151);
         adbOpen.setOnClickListener(v -> {

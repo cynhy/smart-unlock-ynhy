@@ -8,28 +8,24 @@
 - 用途：申请以 shell(uid 2000) 身份执行命令
 - 许可证：Apache License 2.0
 
-## Kadb
+## Android Debug Bridge / adb
 
-- 项目：https://github.com/flyfishxu/Kadb
-- 用途：应用内实现 ADB 客户端与无线调试配对
+- 项目：https://android.googlesource.com/platform/packages/modules/adb
+- 用途：应用内无线调试客户端（`adb pair` / `adb connect` / `adb shell` / `adb push`）
 - 许可证：Apache License 2.0
 
-## Bouncy Castle
+## Termux android-tools（adb 二进制构建来源）
 
-- 项目：https://www.bouncycastle.org/
-- 用途：TLS/密码学实现（Kadb 依赖）
-- 许可证：Bouncy Castle License（MIT 风格）
-
-## Okio / Kotlin stdlib / kotlinx.coroutines
-
-- 项目：https://github.com/square/okio、https://kotlinlang.org/、https://github.com/Kotlin/kotlinx.coroutines
-- 用途：Kadb 的运行库
+- 项目：https://github.com/termux/termux-packages（`android-tools` 包，版本 37.0.0p1-3）
+- 用途：提供可运行的 aarch64 adb 可执行文件
 - 许可证：Apache License 2.0
+- 说明：二进制按原样打包，未修改源码；可通过 Termux 的 `.deb` 包重新获取
 
-## spake2 / hiddenapibypass
+## adb 的依赖库
 
-- 用途：无线调试配对握手、隐藏 API 访问
-- 许可证：随 Kadb 分发，Apache License 2.0
+- Abseil、Protobuf、Brotli、fmt、LZ4、PCRE2：Apache License 2.0
+- zstd（Meta）、zlib（Jean-loup Gailly / Mark Adler）：BSD 式许可
+- 说明：随 adb 二进制一起打包在 `app/assets/adb-libs.zip`，按原样分发
 
 ## 《搞机工具箱》Web 版 6.3.9
 

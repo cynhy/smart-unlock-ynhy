@@ -168,6 +168,8 @@ public class MonitorService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         // 用户可能刚授权「附近的设备」，每次启动指令都重试一次注册
         ensureTracking();
+        // 服务启动/重启时补写一次 track 标记：即使第一次因授权引擎未就绪而失败，也能自愈
+        if (btReceiver != null) refreshPresenceTracked();
         return START_STICKY;
     }
 
@@ -218,7 +220,11 @@ public class MonitorService extends Service {
             public void onReceive(Context context, Intent intent) {
                 String a = intent == null ? "" : intent.getAction();
                 if (Intent.ACTION_SCREEN_OFF.equals(a)) {
-                    refreshPresence(false);
+                    // 息屏预热：应用确实在监听蓝牙广播时顺带把 track 标记写好。
+                    // 否则服务启动时若授权引擎还没就绪，第一次 --present track 会静默失败，
+                    // 缓存永远停在 track=0，之后每次亮屏都要现查蓝牙（+200~350ms）。
+                    if (btReceiver != null) refreshPresenceTracked();
+                    else refreshPresence(false);
                 } else if (Intent.ACTION_SCREEN_ON.equals(a)) {
                     // 应用层广播是主触发源：logcat 在 HyperOS 上会被频繁杀掉，不能只靠它
                     wakeUnlockChain();
@@ -316,6 +322,23 @@ public class MonitorService extends Service {
             @Override
             public void run() {
                 Scripts.presentRefresh(tracking);
+            }
+        });
+    }
+
+    /**
+     * 应用已注册蓝牙广播时，用带节流的「track=true」刷新：
+     * 既避免反复开关屏刷爆 dumpsys，又能把 track=1 写回守护，
+     * 让之后的亮屏解锁直接信任缓存（省掉 200~350ms 的现查蓝牙）。
+     */
+    private void refreshPresenceTracked() {
+        long now = System.currentTimeMillis();
+        if (now - lastIdleMs < 3000) return;
+        lastIdleMs = now;
+        run(new Runnable() {
+            @Override
+            public void run() {
+                Scripts.presentRefresh(true);
             }
         });
     }
