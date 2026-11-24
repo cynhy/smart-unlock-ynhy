@@ -276,6 +276,19 @@ public final class Prefs {
         sp(c).edit().putBoolean("presence_live", v).apply();
     }
 
+    /**
+     * Android 17 / 澎湃 4 适配（默认开启）：锁屏判定走 KeyguardServiceDelegate，
+     * 并用低频轮询兜底亮屏事件。基于小米澎湃 4 实测，可能是澎湃 4 的单独特性；
+     * 关闭后恢复 6.4.3 的事件驱动与固定等待，解锁更快，但需自行确认能正常解锁。
+     */
+    public static boolean a17Compat(Context c) {
+        return sp(c).getBoolean("a17_compat", true);
+    }
+
+    public static void setA17Compat(Context c, boolean v) {
+        sp(c).edit().putBoolean("a17_compat", v).apply();
+    }
+
     /** 无线调试（内置 ADB）主机与端口；主机默认本机回环 */
     public static String adbHost(Context c) {
         String v = sp(c).getString("adb_host", "127.0.0.1");

@@ -44,6 +44,9 @@ PIN_TEXT=$(printf '%s' "$PIN_TEXT" | tr -d '\r\n')
 : ${PROTECT_ENABLED:=0}; : ${MAC_STRICT:=1}; : ${MAC_NAME_FALLBACK:=0}
 : ${WIFI_BIND_BSSID:=1}; : ${WIFI_ALLOW_OPEN:=0}
 : ${EXTEND_UNLOCK:=0}
+# 1 = Android 17 / 澎湃 4 适配（新锁屏判定 + 亮屏轮询兜底 + 键盘就绪等待）
+# 0 = 旧方案（事件驱动 + dismiss 后直接注入），解锁更快，但需确认能正常解锁
+: ${A17_COMPAT:=1}
 # 1 = 每次亮屏都现场查询设备状态（慢 200~350ms，但缓存可能过期时更稳）；0 = 用事件缓存
 : ${PRESENCE_LIVE:=0}
 : ${MUSIC_RETURN:=0}; : ${MUSIC_OPEN_APP:=0}; : ${MUSIC_OPEN_PKG:=}; : ${MUSIC_SWIPE:=0}
@@ -80,7 +83,7 @@ reload_conf() {
   : ${SIM_GUARD:=0}
   : ${PROTECT_ENABLED:=0}; : ${MAC_STRICT:=1}; : ${MAC_NAME_FALLBACK:=0}
   : ${WIFI_BIND_BSSID:=1}; : ${WIFI_ALLOW_OPEN:=0}
-  : ${EXTEND_UNLOCK:=0}; : ${PRESENCE_LIVE:=0}
+  : ${EXTEND_UNLOCK:=0}; : ${PRESENCE_LIVE:=0}; : ${A17_COMPAT:=1}
   : ${MUSIC_RETURN:=0}; : ${MUSIC_OPEN_APP:=0}; : ${MUSIC_OPEN_PKG:=}; : ${MUSIC_SWIPE:=0}
   : ${SKIP_WHEN_UNLOCKED:=1}
   log "config reloaded (presence_live=${PRESENCE_LIVE} wifi_unlock=${WIFI_UNLOCK})"
@@ -537,9 +540,33 @@ locked() {
     *mIsShowing=true*) return 0 ;;
     *mIsShowing=false*) return 1 ;;
   esac
+  # Android 17 / HyperOS 4：mIsShowing 已被移除，改看 KeyguardServiceDelegate。
+  # showing=true 就仍处于锁屏；occluded=true 只表示被音乐锁屏这类全屏 Activity 盖住，
+  # 不能当成「已解锁」，否则守护会直接跳过注入。
+  kg=$(printf '%s\n' "$p" | grep -A4 'KeyguardServiceDelegate' | grep -m1 'showing=')
+  case "$kg" in
+    *showing=true*) return 0 ;;
+    *showing=false*) return 1 ;;
+  esac
   # 个别 ROM 改了输出格式，退回焦点窗口判断
   dumpsys window 2>/dev/null | grep -m1 mCurrentFocus \
     | grep -qE 'Keyguard|keyguard|NotificationShade|StatusBar'
+}
+
+# 密码键盘是否已经浮到前台。音乐锁屏/全屏锁屏 Activity 会先占住焦点，
+# 这时立刻 input text，PIN 会打到它身上，等于白输。
+bouncer_ready() {
+  dumpsys window 2>/dev/null | grep -m1 mCurrentFocus \
+    | grep -qE 'NotificationShade|Keyguard|keyguard|com.android.systemui|miui.systemui'
+}
+
+wait_bouncer() {
+  n=0
+  while [ $n -lt 6 ]; do
+    bouncer_ready && return 0
+    sleep 0.1; n=$((n+1))
+  done
+  return 1
 }
 
 # 息屏/口袋模式：一个 dumpsys 同时看 wakefulness 和显示状态
@@ -557,8 +584,13 @@ wait_unlocked() {
 }
 
 keypad_present() {
-  timeout 3 uiautomator dump $UI >/dev/null 2>&1 || return 1
-  grep -qE 'keyguard_pin_view|/pinEntry' $UI 2>/dev/null
+  if timeout 3 uiautomator dump $UI >/dev/null 2>&1; then
+    grep -qE 'keyguard_pin_view|/pinEntry' $UI 2>/dev/null
+    return $?
+  fi
+  # Android 17 的密码锁屏是 secure window，uiautomator 无法 dump；
+  # 这时用「锁屏仍在 + 焦点已回到 SystemUI」判断密码键盘已浮出。
+  locked && bouncer_ready
 }
 
 wait_keypad() {
@@ -579,6 +611,8 @@ sim_locked() {
 }
 
 on_keyguard() {
+  # 音乐锁屏等 showWhenLocked 页面会把焦点抢走，不能只看焦点
+  locked && return 0
   KG_FOCUS=$(dumpsys window 2>/dev/null | grep -m1 mCurrentFocus)
   echo "$KG_FOCUS" | grep -qE 'NotificationShade|StatusBar|Keyguard|keyguard|com.android.systemui|miui.systemui'
 }
@@ -595,17 +629,23 @@ screen_xy() {
 # 真的拉不起 PIN 界面时慢路径会自动改用上滑
 UNLOCK_MODE=dismiss
 
-open_dismiss() { wm dismiss-keyguard; sleep 0.3; }
+open_dismiss() { wm dismiss-keyguard; wait_bouncer; sleep 0.3; }
 
-# 热路径的开门动作：只发 dismiss，不等整段动画；input 自身启动的 150ms 正好当缓冲
+# 热路径的开门动作：dismiss 后先等密码键盘真正拿到焦点，再注入；
+# 有全屏音乐锁屏时，这段等待是必须的，否则 PIN 会打到音乐页面上。
 open_fast() {
   if [ "$UNLOCK_MODE" = "dismiss" ]; then
     wm dismiss-keyguard
+    # 安卓17适配关闭时不等键盘焦点、不加 settle，恢复旧方案的直接注入（更快）
+    if [ "$A17_COMPAT" = "1" ]; then
+      bouncer_ready || wait_bouncer
+      [ "$FAST_SETTLE" != "0" ] && sleep $FAST_SETTLE
+    fi
   else
     set -- $(screen_xy)
     input swipe $1 $2 $3 $4 300
+    wait_bouncer
   fi
-  [ "$FAST_SETTLE" != "0" ] && sleep $FAST_SETTLE
 }
 open_swipe() {
   set -- $(screen_xy)
@@ -864,8 +904,8 @@ extend_check_offline() {
 
 # 热路径复核：直接看当前焦点，跳过 policy dump（省约 30~40ms）
 locked_fast() {
-  dumpsys window 2>/dev/null | grep -m1 mCurrentFocus \
-    | grep -qE 'Keyguard|keyguard|NotificationShade|StatusBar|systemui'
+  # 不能只看焦点：音乐锁屏会占住焦点，把「仍然锁着」误判成「已解锁」
+  locked
 }
 
 # 热路径：亮屏直接注入，不再 dismiss/滑动、不再 uiautomator dump
@@ -1059,6 +1099,7 @@ if [ "$1" = "--check" ]; then
   echo "wifi_sec    : ${cur_s:-?}"
   echo "wifi_trusted: $wtr"
   echo "presence_live: ${PRESENCE_LIVE:-0}"
+  echo "a17_compat  : ${A17_COMPAT:-1}"
   echo "protect     : ${PROTECT_ENABLED:-0} (mac_strict=${MAC_STRICT:-1} fallback=${MAC_NAME_FALLBACK:-0} bssid=${WIFI_BIND_BSSID:-1} allow_open=${WIFI_ALLOW_OPEN:-0})"
   echo "identity    : $(cat $IDENT 2>/dev/null | head -n1)"
   echo "extended    : $([ -f $EXT ] && echo yes || echo no)"
@@ -1100,7 +1141,7 @@ done
 
 load_state
 last=0
-log "daemon started (pid $$) status=$status mode=${WATCH_MODE:-any} rssi_min=${RSSI_MIN:-0} wifi_unlock=${WIFI_UNLOCK:-0} wifi_required=${WIFI_REQUIRED:-0} sim_guard=${SIM_GUARD:-0} protect=${PROTECT_ENABLED:-0} extend=${EXTEND_UNLOCK:-0} presence_live=${PRESENCE_LIVE:-0}"
+log "daemon started (pid $$) status=$status mode=${WATCH_MODE:-any} rssi_min=${RSSI_MIN:-0} wifi_unlock=${WIFI_UNLOCK:-0} wifi_required=${WIFI_REQUIRED:-0} sim_guard=${SIM_GUARD:-0} protect=${PROTECT_ENABLED:-0} extend=${EXTEND_UNLOCK:-0} presence_live=${PRESENCE_LIVE:-0} a17=${A17_COMPAT:-1}"
 if [ "$status" = "disabled" ]; then
   log "state=disabled, refuse to start；请核对密码后重新部署"
   rm -rf $LOCKDIR 2>/dev/null
@@ -1131,6 +1172,59 @@ elif [ "$paused_until" -gt "$now" ]; then
   log "cooling down (until $paused_until), skip startup unlock"
 elif awake && locked && present_ok_fast; then
   last=$now; TRIGGER_SRC=start; do_unlock_guarded
+fi
+
+# Android 17 / HyperOS 4 起系统不再输出 power_screen_state 事件，logcat 监听会一直空转；
+# 应用在后台时收不到 ACTION_SCREEN_ON（HyperOS 会拦），也不能只靠应用。
+# 这里用一次 dumpsys window policy 同时取亮屏和锁屏状态，低频轮询兜底。
+# 只在确实需要的 ROM 上开启：policy 里还有 mIsShowing 的老系统沿用 logcat 事件，
+# 不必每 0.9 秒跑一次 dumpsys 白耗电。
+# 轮询进程始终存在，但 A17_COMPAT=0 时只空转不查询，方便在应用里开关后立即生效。
+POLL_NEEDED=0
+dumpsys window policy 2>/dev/null | grep -q 'mIsShowing' || POLL_NEEDED=1
+if [ "$POLL_NEEDED" = "1" ]; then
+(
+  last_on=""
+  while :; do
+    load_state
+    reload_conf
+    if [ "$A17_COMPAT" != "1" ]; then
+      last_on=""
+      sleep 1.5
+      continue
+    fi
+    [ "$status" = "disabled" ] && exit 0
+    p=$(dumpsys window policy 2>/dev/null)
+    case "$p" in
+      *interactiveState=INTERACTIVE_STATE_AWAKE*) on=1 ;;
+      *) on=0 ;;
+    esac
+    if [ "$on" = "1" ]; then
+      if [ "$last_on" != "1" ]; then
+        last_on=1
+        now=$(date +%s)
+        if [ "$pause_until" -le "$now" ] && [ "$paused_until" -le "$now" ]; then
+          case "$p" in
+            *showing=true*)
+              reload_conf
+              TRIGGER_SRC=fallback
+              QUIET_ALREADY=0
+              do_unlock_guarded
+              # 失败后再补两次
+              n=0
+              while [ $n -lt 2 ] && locked; do
+                sleep 0.6; do_unlock_guarded; n=$((n+1))
+              done
+              ;;
+          esac
+        fi
+      fi
+    else
+      last_on=0
+    fi
+    sleep 0.9
+  done
+) &
 fi
 
 while :; do

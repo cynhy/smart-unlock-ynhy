@@ -98,7 +98,7 @@ public final class Scripts {
                                     String wifiList, boolean wifiUnlock, boolean wifiRequired,
                                     boolean simGuard, String rssi) {
         return configText(pin, targets, all, wifiList, wifiUnlock, wifiRequired, simGuard, rssi,
-                false, "", false, true, false, true, false, true, false, false, false);
+                false, "", false, true, false, true, false, true, false, false, false, true);
     }
 
     public static String configText(String pin, String targets, boolean all,
@@ -108,7 +108,8 @@ public final class Scripts {
                                     boolean skipWhenUnlocked, boolean protect,
                                     boolean macStrict, boolean macFallback,
                                     boolean wifiBind, boolean wifiAllowOpen,
-                                    boolean extendUnlock, boolean presenceLive) {
+                                    boolean extendUnlock, boolean presenceLive,
+                                    boolean a17Compat) {
         String r = rssi == null ? "0" : rssi.trim();
         if (!r.matches("-?[0-9]{1,3}")) r = "0";
         String pkg = musicPkg == null ? "" : musicPkg.trim();
@@ -134,6 +135,7 @@ public final class Scripts {
                 + "WIFI_BIND_BSSID=\"" + (wifiBind ? "1" : "0") + "\"\n"
                 + "WIFI_ALLOW_OPEN=\"" + (wifiAllowOpen ? "1" : "0") + "\"\n"
                 + "EXTEND_UNLOCK=\"" + (extendUnlock ? "1" : "0") + "\"\n"
+                + "A17_COMPAT=\"" + (a17Compat ? "1" : "0") + "\"\n"
                 + "DEBOUNCE=6\n"
                 + "MAX_FAILS=3\n"
                 + "COOLDOWN=600\n";
@@ -229,7 +231,7 @@ public final class Scripts {
                 // 判成「不在线」导致完全无法解锁，见 ProtectActivity 里的说明。
                 Prefs.protectEnabled(ctx), false, false,
                 Prefs.wifiBindBssid(ctx), Prefs.wifiAllowOpen(ctx),
-                Prefs.extendUnlock(ctx), Prefs.presenceLive(ctx));
+                Prefs.extendUnlock(ctx), Prefs.presenceLive(ctx), Prefs.a17Compat(ctx));
     }
 
     /** 开关/勾选变化后：只重写配置并重启守护，不重新写脚本 */

@@ -435,6 +435,19 @@ public class SettingsActivity extends Activity {
                                 + "not typed again. Note: ROMs that re-lock immediately after screen-off "
                                 + "will still receive the normal injection."),
                 Prefs.skipWhenUnlocked(this), v -> Prefs.setSkipWhenUnlocked(this, v));
+        switchRow(c,
+                I18n.t("Android 17 适配", "Android 17 compatibility"),
+                I18n.t("默认开启。针对 Android 17 / 澎湃 4 改用新的锁屏判定，并增加亮屏低频轮询兜底。"
+                        + "基于小米澎湃 4（Android 17）实测，可能是澎湃 4 的单独特性；"
+                        + "如果关闭后仍能正常解锁，可以关闭，以减少后台轮询与等待带来的额外耗时。",
+                        "On by default. Uses the new keyguard detection plus a low-frequency wake "
+                                + "fallback poll for Android 17 / HyperOS 4. Tested on Xiaomi HyperOS 4; "
+                                + "it may be a HyperOS 4-specific behavior. If unlocking still works with "
+                                + "this off, turn it off to reduce polling and waiting overhead."),
+                Prefs.a17Compat(this), v -> {
+                    Prefs.setA17Compat(this, v);
+                    applyQuietly();
+                });
         return c;
     }
 
