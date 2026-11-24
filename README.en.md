@@ -13,9 +13,11 @@ Use a paired Bluetooth device (watch / earbuds / band) as a key: while it is onl
 ---
 
 > [!IMPORTANT]
-> **Use 6.4.3.** Other versions may have functional defects or security vulnerabilities; they are kept for history only — use them with caution.
+> **Use 6.4.6.** Other versions may have functional defects or security vulnerabilities; they are kept for history only — use them with caution.
 >
-> **Wireless debugging: every build before 6.4.0 (including 6.3.9) has a known bug and may fail to pair or connect.** Use **6.4.0 or later** (the current recommendation is **6.4.3**) if you need wireless debugging; 6.4.0 fixes pairing-service discovery, connect-port discovery and the notification send button. **6.3.9 is a historical build** (versionCode 639) whose wireless debugging is unreliable — do not rely on it.
+> **Wireless debugging: every build before 6.4.0 (including 6.3.9) has a known bug and may fail to pair or connect.** Use **6.4.0 or later** (the current recommendation is **6.4.6**) if you need wireless debugging; 6.4.0 fixes pairing-service discovery, connect-port discovery and the notification send button. **6.3.9 is a historical build** (versionCode 639) whose wireless debugging is unreliable — do not rely on it.
+>
+> **Android 17 / HyperOS 4: you must use 6.4.6 and keep “Settings → Unlock enhancements → Android 17 compatibility” enabled.** 6.4.3 and earlier cannot detect the keyguard on Android 17 and will never unlock.
 >
 > **Unsigned APKs are never uploaded to any Release.** The repository holds source code and documentation only; Releases contain signed builds only.
 
@@ -28,9 +30,50 @@ Not suitable for:
 - Pattern or mixed-password lock screens (only a 4–16 digit numeric PIN is supported);
 - Users with very high security requirements who cannot accept shell-level access;
 
-## 6.4.3 update (recommended)
+## 6.4.6 update (recommended)
 
-> **Important: every build before 6.4.0 (including 6.3.9) has a known wireless-debugging bug — the pairing service may not be found, the connect port may be missing after pairing, or the notification send button may not respond.** Use 6.4.0 or later (6.4.3 recommended).
+> **Important: on Android 17 / HyperOS 4 you must use 6.4.6 and keep “Settings → Unlock enhancements → Android 17 compatibility” enabled.** 6.4.3 and earlier never trigger an unlock on Android 17.
+
+This release is an **Android 17 / HyperOS 4 compatibility patch**; behaviour on Android 8.0 – 16 is identical to 6.4.3. The three authorization paths, Bluetooth / Wi-Fi conditions and extended unlock are unchanged.
+
+### What was fixed
+
+| Change on Android 17 | Behaviour in 6.4.3 | Handling in 6.4.6 |
+| --- | --- | --- |
+| `dumpsys window policy` drops `mIsShowing` | Misread as “not locked”, unlock skipped | Reads `KeyguardServiceDelegate showing=` instead, with a focus-window fallback |
+| The `power_screen_state` event is no longer emitted | No trigger on screen wake | Adds a 0.9 s low-frequency poll as a safety net, edge-triggered |
+| `ACTION_SCREEN_ON` is not delivered to background apps | The app-side wake chain dies | App wake chain plus daemon polling |
+
+Other improvements:
+
+- The PIN is injected **only after the keyboard gains focus**, so `input text` no longer lands in the wrong window;
+- A full-screen Activity such as a music lock screen is no longer treated as unlocked when `occluded=true` — the daemon waits for the keypad instead;
+- New “Unlock enhancements → **Android 17 compatibility**” switch (`A17_COMPAT`, on by default). Turning it off skips polling and focus waiting (faster), but the device will never unlock on Android 17;
+- `wu-daemon.sh --check` now reports `a17_compat`, and the startup log carries `a17=1`.
+
+### Measured
+
+| Scenario | Result |
+| --- | --- |
+| Screen off → screen on | Unlocked in about 370–620 ms |
+| Screen off → screen on after `am force-stop` | Unlocked in about 760 ms |
+| “Android 17 compatibility” turned off | No trigger for 8+ seconds; the screen stays locked |
+
+### Cost
+
+- The poll costs about **0.2–0.4 mA** (0.3–0.5% of one core, roughly 5–10 mAh per day, ~0.1–0.2% battery);
+- The whole solution stays at about **1.5–2 mA** (36–48 mAh per day, ~0.7–1.0%);
+- Polling starts only when `mIsShowing` is absent, so Android 16 and earlier pay nothing extra.
+
+### Upgrading
+
+- Same official signature as 6.4.3, so it installs over it (versionCode 646).
+- After installing, open the app and tap **“Deploy and enable”** once: the daemon script ships inside the APK and is not replaced automatically.
+- Confirm “Settings → Unlock enhancements → Android 17 compatibility” is on.
+
+## 6.4.3 update (wireless-debugging fixes)
+
+> **Important: every build before 6.4.0 (including 6.3.9) has a known wireless-debugging bug — the pairing service may not be found, the connect port may be missing after pairing, or the notification send button may not respond.** Use 6.4.0 or later (6.4.6 recommended).
 
 Note: the core wireless-debugging fixes shipped in **6.4.0**; 6.4.3 keeps them and adds the split-screen hint.
 
@@ -88,11 +131,12 @@ The three are mutually exclusive; after switching, tap “Deploy & enable” aga
 
 ## Download
 
-### Recommended build (6.4.3)
+### Recommended build (6.4.6)
 
 | Version | Download | Notes |
 | --- | --- | --- |
-| **6.4.3** | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | **Currently recommended**: wireless-debugging fixes (pairing discovery / connect port / big send button) + Root stability fixes + Web ADB two-phone flow |
+| **6.4.6** | [watch-unlock-6.4.6-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.6/watch-unlock-6.4.6-signed.apk) | **Currently recommended**: Android 17 / HyperOS 4 compatibility (keyguard detection + wake polling + keypad focus), plus every 6.4.3 fix |
+| 6.4.3 | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | Previous build: wireless-debugging fixes (pairing discovery / connect port / big send button) + Root stability fixes + Web ADB two-phone flow; **cannot unlock on Android 17** |
 
 ### Other signed builds (historical, may have functional defects or security vulnerabilities)
 
@@ -120,13 +164,13 @@ The three are mutually exclusive; after switching, tap “Deploy & enable” aga
 
 ## Quick start
 
-1. **Install**: use 6.4.3; other versions may have functional defects or security vulnerabilities.
+1. **Install**: use 6.4.6; other versions may have functional defects or security vulnerabilities.
 2. **Authorize**: Settings → Authorization method → Shizuku (recommended) / Root / Wireless debugging, and follow the on-screen steps.
 3. **Pair the device**: pair the watch / earbuds in system Bluetooth first, then tap “Rescan” in the app and tick it.
 4. **Enter the PIN**: use the same 4–16 digit PIN as the system lock screen.
 5. **Deploy & enable**: back on the home page, tap “Deploy & enable”, then lock and wake the screen to test.
 
-The complete steps, optional features and troubleshooting are in **[docs/使用说明.md](docs/使用说明.md)** (Chinese, updated to 6.4.3).
+The complete steps, optional features and troubleshooting are in **[docs/使用说明.md](docs/使用说明.md)** (Chinese, updated to 6.4.6).
 
 ## Web ADB (no loopback port)
 
@@ -187,13 +231,13 @@ Source lives in [`app/`](app). No Gradle; the build uses `aapt2 + javac + d8 + z
 
 ```powershell
 Remove-Item Env:SMART_KS_PASS -ErrorAction SilentlyContinue   # no passphrase = unsigned output only
-$env:WU_VC=643
-$env:WU_VN='6.4.3'
+$env:WU_VC=646
+$env:WU_VN='6.4.6'
 powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 ```
 
 - Output: `app\build\aligned.apk` (unsigned);
-- With `SMART_KS_PASS` set (official passphrase), the output is `watch-unlock-6.4.3-signed.apk` (rename with `WU_APK`);
+- With `SMART_KS_PASS` set (official passphrase), the output is `watch-unlock-6.4.6-signed.apk` (rename with `WU_APK`);
 - Non-ASCII source paths are mirrored to `%TEMP%\watch-unlock-build` automatically, and the artifact is copied back to `app\build`;
 - Dependency jars are not committed; see [`libs/README.md`](libs/README.md).
 
@@ -201,7 +245,7 @@ Signing:
 
 ```powershell
 apksigner sign --ks <your keystore> --ks-pass pass:<passphrase> `
-  --out watch-unlock-6.4.3-signed.apk app\build\aligned.apk
+  --out watch-unlock-6.4.6-signed.apk app\build\aligned.apk
 ```
 
 ## Layout

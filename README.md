@@ -15,9 +15,11 @@
 ---
 
 > [!IMPORTANT]
-> **推荐使用 6.4.3。** 其余版本可能存在功能缺陷或安全性漏洞，仅作历史留存，请谨慎使用。
+> **推荐使用 6.4.6。** 其余版本可能存在功能缺陷或安全性漏洞，仅作历史留存，请谨慎使用。
 >
-> **无线调试：6.4.0 之前的所有版本都存在已知 bug，可能无法完成配对或连接。** 需要无线调试请使用 **6.4.0 及以后**（当前推荐 **6.4.3**）；6.4.0 起修复了配对服务发现、连接端口发现和通知输码按钮的问题。**6.3.9 是历史版本**（versionCode 639），无线调试不可靠，请勿用于实际使用。
+> **无线调试：6.4.0 之前的所有版本都存在已知 bug，可能无法完成配对或连接。** 需要无线调试请使用 **6.4.0 及以后**（当前推荐 **6.4.6**）；6.4.0 起修复了配对服务发现、连接端口发现和通知输码按钮的问题。**6.3.9 是历史版本**（versionCode 639），无线调试不可靠，请勿用于实际使用。
+>
+> **Android 17 / 澎湃 4：必须使用 6.4.6，并保持「设置 → 解锁增强 → Android 17 适配」开启。** 6.4.3 及更早版本在 Android 17 上无法识别锁屏状态，会完全不解锁。
 >
 > 仓库只收录源码与文档；Release 中只放了签名包。
 
@@ -30,9 +32,50 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 - 图案 / 混合密码锁屏（只支持 4～16 位纯数字 PIN）；
 - 对安全性要求极高、不能接受 shell 权限的用户；
 
-## 6.4.3 更新（推荐）
+## 6.4.6 更新（推荐）
 
-> **重要：6.4.0 之前的所有版本（含 6.3.9），无线调试都有已知 bug，可能搜不到配对服务、配对成功后找不到连接端口，或通知里点发送没反应。** 请使用 6.4.0 及以后（推荐 6.4.3）。
+> **重要：Android 17 / 澎湃 4 必须使用 6.4.6，并在「设置 → 解锁增强」保持「Android 17 适配」开启。** 6.4.3 及更早版本在 Android 17 上不会触发解锁。
+
+本版是 **Android 17 / 澎湃 4 的兼容补丁**；Android 8.0 – 16 上的行为与 6.4.3 一致。三档授权方式、蓝牙 / WiFi 条件、延长解锁等功能均未改动。
+
+### 修了什么
+
+| Android 17 的变化 | 6.4.3 的表现 | 6.4.6 的处理 |
+| --- | --- | --- |
+| `dumpsys window policy` 移除 `mIsShowing` | 误判为「未锁屏」，直接跳过 | 改用 `KeyguardServiceDelegate showing=` 判定，焦点窗口兜底 |
+| 不再输出 `power_screen_state` 事件 | 亮屏没有触发源 | 增加 0.9 秒低频轮询兜底，边沿触发 |
+| 后台收不到 `ACTION_SCREEN_ON` | 应用侧亮屏链失效 | 应用亮屏链 + 守护轮询双通道 |
+
+其他改进：
+
+- 密码键盘改为**等待焦点后再注入**，减少 `input text` 打错窗口；
+- 音乐锁屏等全屏 Activity 抢占焦点时会先等键盘出现，不再把 `occluded=true` 当成已解锁；
+- 新增设置项「解锁增强 → **Android 17 适配**」（`A17_COMPAT`，默认开启）。关闭后不轮询、不等焦点、解锁更快，但在 Android 17 上会完全不解锁；
+- `wu-daemon.sh --check` 增加 `a17_compat` 字段，启动日志带 `a17=1`。
+
+### 实测
+
+| 场景 | 结果 |
+| --- | --- |
+| 关屏 → 亮屏 | 解锁成功，约 370–620ms |
+| `am force-stop` 后关屏 → 亮屏 | 解锁成功，约 760ms |
+| 关闭「Android 17 适配」 | 8 秒以上无触发，屏幕保持锁定 |
+
+### 代价
+
+- 轮询约 **0.2–0.4 mA**（0.3–0.5% 单核，24 小时约 5–10 mAh，约 0.1–0.2% 电量）；
+- 整套方案合计约 **1.5–2 mA**（24 小时约 36–48 mAh，约 0.7–1.0%）；
+- 轮询只在检测不到 `mIsShowing` 时启动，Android 16 及更早的系统不会多耗电。
+
+### 升级须知
+
+- 与 6.4.3 使用同一正式签名，可直接覆盖安装（versionCode 646）。
+- 安装后请打开应用点一次**「部署并启用」**：守护脚本随 APK 下发，旧脚本不会自动替换。
+- 升级后确认「设置 → 解锁增强 → Android 17 适配」为开启状态。
+
+## 6.4.3 更新（无线调试修复）
+
+> **重要：6.4.0 之前的所有版本（含 6.3.9），无线调试都有已知 bug，可能搜不到配对服务、配对成功后找不到连接端口，或通知里点发送没反应。** 请使用 6.4.0 及以后（当前推荐 6.4.6）。
 
 本次说明：无线调试核心修复在 **6.4.0** 完成，6.4.3 沿用并补充分屏 / 小窗提示。
 
@@ -91,11 +134,12 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 
 ## 下载
 
-### 推荐版本（6.4.3）
+### 推荐版本（6.4.6）
 
 | 版本 | 下载 | 说明 |
 | --- | --- | --- |
-| **6.4.3** | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | **目前推荐**：修复无线调试（配对发现 / 连接端口 / 大按钮发送）+ Root 稳定性修复 + 网页版 ADB 两台手机流程 |
+| **6.4.6** | [watch-unlock-6.4.6-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.6/watch-unlock-6.4.6-signed.apk) | **目前推荐**：Android 17 / 澎湃 4 兼容（锁屏判定 + 亮屏轮询 + 键盘焦点），沿用 6.4.3 全部修复 |
+| 6.4.3 | [watch-unlock-6.4.3-signed.apk](https://github.com/cynhy/smart-unlock-ynhy/releases/download/v6.4.3/watch-unlock-6.4.3-signed.apk) | 上一版：修复无线调试（配对发现 / 连接端口 / 大按钮发送）+ Root 稳定性修复 + 网页版 ADB 两台手机流程；**Android 17 上无法解锁** |
 
 ### 其他已签名版本（历史，可能存在功能缺陷或安全性漏洞）
 
@@ -123,13 +167,13 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 
 ## 快速开始
 
-1. **安装**：装 6.4.3；其余版本可能存在功能缺陷或安全性漏洞。
+1. **安装**：装 6.4.6；其余版本可能存在功能缺陷或安全性漏洞。
 2. **授权**：设置 → 授权方式 → Shizuku（推荐）/ Root / 无线调试，按页面提示完成授权。
 3. **配对设备**：先让手表 / 耳机在系统蓝牙里配对，回到应用点「重新扫描」，勾选设备。
 4. **填 PIN**：输入与系统锁屏一致的 4～16 位数字。
 5. **部署并启用**：回主页点「部署并启用」，锁屏后亮屏测试。
 
-更完整的步骤、可选项与故障排查见 **[使用说明](docs/使用说明.md)**（已更新到 6.4.3）。
+更完整的步骤、可选项与故障排查见 **[使用说明](docs/使用说明.md)**（已更新到 6.4.6）。
 
 ## 网页版 ADB（免回环端口）
 
@@ -188,13 +232,13 @@ Smart Unlock 是一个 Android 小工具：它把「蓝牙设备在线」当作�
 
 ```powershell
 Remove-Item Env:SMART_KS_PASS -ErrorAction SilentlyContinue   # 不设口令 = 只出未签名包
-$env:WU_VC=643
-$env:WU_VN='6.4.3'
+$env:WU_VC=646
+$env:WU_VN='6.4.6'
 powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 ```
 
 - 输出：`app\build\aligned.apk`（未签名）；
-- 设置 `SMART_KS_PASS`（正式签名口令）后输出 `watch-unlock-6.4.3-signed.apk`（可用 `WU_APK` 改名）；
+- 设置 `SMART_KS_PASS`（正式签名口令）后输出 `watch-unlock-6.4.6-signed.apk`（可用 `WU_APK` 改名）；
 - 源码放在中文路径下也能构建：脚本会自动镜像到 `%TEMP%\watch-unlock-build`，产物复制回 `app\build`；
 - 依赖 jar 不随仓库提交，请按 [`libs/README.md`](libs/README.md) 自行放入 `app/libs`。
 
@@ -202,7 +246,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 
 ```powershell
 apksigner sign --ks <你的密钥库> --ks-pass pass:<口令> `
-  --out watch-unlock-6.4.3-signed.apk app\build\aligned.apk
+  --out watch-unlock-6.4.6-signed.apk app\build\aligned.apk
 ```
 
 ## 目录
